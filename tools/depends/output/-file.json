@@ -1,0 +1,6 @@
+{
+  "schemaVersion" : "1.0",
+  "name" : "./-file-sdsm",
+  "variables" : [ "Test.java" ],
+  "cells" : [ ]
+}
