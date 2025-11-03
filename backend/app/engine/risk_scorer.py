@@ -235,7 +235,7 @@ class RiskScorer:
 
     def _determine_risk_level(self, score: float) -> tuple:
         """Determine risk level and color based on score"""
-        if score >= 7.5:
+        if score >= 6:
             return ("CRITICAL", "#dc3545")  # Red
         elif score >= 5.5:
             return ("HIGH", "#fd7e14")  # Orange

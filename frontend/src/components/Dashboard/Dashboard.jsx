@@ -35,9 +35,21 @@ function Dashboard() {
   useEffect(() => {
     loadAnalyses();
     // Auto-refresh every 10 seconds
-    const interval = setInterval(loadAnalyses, 10000);
-    return () => clearInterval(interval);
+    // const interval = setInterval(loadAnalyses, 10000);
+    // return () => clearInterval(interval);
   }, []);
+
+  // useEffect(() => {
+  //   // Initial load
+  //   loadAnalyses(true);
+    
+  //   // Auto-refresh every 30 seconds (changed from 10 to 30)
+  //   const interval = setInterval(() => {
+  //     loadAnalyses(false); // Don't show loading spinner on refresh
+  //   }, 30000); // 30 seconds
+    
+  //   return () => clearInterval(interval);
+  // }, []); // Empty dependency array - only run once
 
   const loadAnalyses = async () => {
     setLoading(true);
@@ -51,6 +63,29 @@ function Dashboard() {
       setLoading(false);
     }
   };
+
+  // const loadAnalyses = async (showLoading = true) => {
+  //   if (showLoading) {
+  //     setLoading(true);
+  //   } else {
+  //     setRefreshing(true);
+  //   }
+    
+  //   try {
+  //     const data = await apiService.getAllAnalyses();
+  //     setAnalyses(data);
+  //     calculateStats(data);
+  //   } catch (error) {
+  //     console.error('Error loading analyses:', error);
+  //     // Don't show error if it's just a refresh
+  //     if (!showLoading) {
+  //       console.log('Refresh failed, will retry in 30s');
+  //     }
+  //   } finally {
+  //     setLoading(false);
+  //     setRefreshing(false);
+  //   }
+  // };
 
   const calculateStats = (analysesData) => {
     const critical = analysesData.filter(
