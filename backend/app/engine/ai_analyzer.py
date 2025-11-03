@@ -5,20 +5,27 @@ AI-powered code analysis using Google Gemini
 import google.generativeai as genai
 import os
 import json
+import re
 from typing import Dict, List
 from dotenv import load_dotenv 
 
 # 1. Load variables from the .env file into os.environ
 load_dotenv() 
 
-# Configure Gemini
-# genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-genai.configure() 
+# --- CRITICAL FIX ---
+# Configure Gemini with the API key from the environment
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    print("❌ FATAL: GEMINI_API_KEY environment variable not set.")
+    # You might want to raise an Exception here to stop the app
+else:
+    genai.configure(api_key=api_key)
+# --------------------
 
 
 class AIAnalyzer:
     def __init__(self):
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        self.model = genai.GenerativeModel('gemini-2.5-flash') 
         print("✅ Gemini AI initialized")
 
     async def analyze_impact(
@@ -45,27 +52,49 @@ class AIAnalyzer:
             file_path, code_diff, dependencies)
 
         try:
-            # Call Gemini API
+            # --- AI FIX: Add safety settings to prevent blocking ---
+            safety_settings = {
+                'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
+                'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
+                'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
+                'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
+            }
+
+            # --- FINAL FIX: Increase max_output_tokens ---
+            config = {
+                'temperature': 0.2,
+                'top_p': 0.8,
+                'top_k': 40,
+                'max_output_tokens': 8192, # Was 2048, now increased
+            }
+            # ---------------------------------------------
+            
             response = self.model.generate_content(
                 prompt,
-                generation_config={
-                    'temperature': 0.2,  # Low for consistent analysis
-                    'top_p': 0.8,
-                    'top_k': 40,
-                    'max_output_tokens': 2048,
-                }
+                generation_config=config,
+                safety_settings=safety_settings
             )
 
-            # Parse response
-            insights = self._parse_ai_response(response.text)
+            # --- More robust check for empty/blocked content ---
+            if not response.parts or not response.parts[0].text:
+                block_reason = "Unknown"
+                try:
+                    if response.prompt_feedback and response.prompt_feedback.block_reason:
+                        block_reason = response.prompt_feedback.block_reason
+                except Exception:
+                    pass # Silently fail if feedback object is weird
+                raise Exception(f"AI response was empty or blocked. Block reason: {block_reason}")
+            
+            response_text = response.parts[0].text
+            # ------------------------------------
+
+            insights = self._parse_ai_response(response_text) # <-- Use the safe variable
 
             print(f"✅ AI analysis complete")
-
             return insights
 
         except Exception as e:
             print(f"❌ AI analysis error: {e}")
-            # Return fallback analysis
             return self._fallback_analysis()
 
     def _build_analysis_prompt(
@@ -145,38 +174,45 @@ Provide specific, actionable insights focused on banking domain risks.
     def _format_dependencies(self, deps: List[Dict]) -> str:
         """Format dependencies for prompt"""
         if not deps:
-            return "  None"
+            return "   None"
 
         formatted = []
         for dep in deps:
             formatted.append(
-                f"  - {dep['source']} {dep['type']} {dep['target']}"
+                f"   - {dep['source']} {dep['type']} {dep['target']}"
             )
         return "\n".join(formatted)
 
     def _parse_ai_response(self, response_text: str) -> Dict:
         """Parse AI response text to structured data"""
         try:
-            # Try to extract JSON from response
-            # Gemini sometimes wraps JSON in markdown code blocks
-            if "```json" in response_text:
-                start = response_text.find("```json") + 7
-                end = response_text.find("```", start)
-                json_str = response_text[start:end].strip()
-            elif "```" in response_text:
-                start = response_text.find("```") + 3
-                end = response_text.find("```", start)
-                json_str = response_text[start:end].strip()
-            else:
-                json_str = response_text.strip()
+            # --- AI FIX: Find the JSON block more reliably ---
+            # Find the start of the JSON
+            start = response_text.find("{")
+            if start == -1:
+                raise json.JSONDecodeError("No '{' found in response", response_text, 0)
 
+            # Find the end of the JSON
+            end = response_text.rfind("}")
+            if end == -1:
+                raise json.JSONDecodeError("No '}' found in response", response_text, 0)
+            
+            json_str = response_text[start:end+1]
+            
+            # Clean up known bad characters from the log
+            json_str = json_str.replace(r'\"', '"') # Fix escaped quotes
+            json_str = json_str.replace(r"G", " ") # Fix non-breaking spaces
+            
             parsed = json.loads(json_str)
             return parsed
+            # --- END OF FIX ---
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            print(f"❌ AI response parsing failed: {e}")
+            
             # If JSON parsing fails, create structured response from text
             return {
-                "summary": response_text[:200],
+                "summary": response_text[:200] + "...", # Truncate summary
                 "risks": ["AI response parsing failed - manual review needed"],
                 "regulatory_concerns": "Unable to parse",
                 "affected_business_flows": [],
@@ -239,6 +275,7 @@ Return as JSON array:
 """
 
         try:
+            # Removed the unsupported 'response_mime_type' here as well
             response = self.model.generate_content(prompt)
             scenarios = self._parse_ai_response(response.text)
 
@@ -248,3 +285,4 @@ Return as JSON array:
                 return []
         except:
             return []
+

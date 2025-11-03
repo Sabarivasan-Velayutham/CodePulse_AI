@@ -14,6 +14,12 @@ services:
       - neo4j_logs:/logs
     networks:
       - codeflow-network
+    # --- ADDED HEALTHCHECK ---
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "codeflow123", "RETURN 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
 
   backend:
     build: ./backend
@@ -28,8 +34,10 @@ services:
     volumes:
       - ./backend:/app
       - ./tools:/tools
+      - ./sample-repo:/sample-repo
     depends_on:
-      - neo4j
+      neo4j:
+        condition: service_healthy
     networks:
       - codeflow-network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
