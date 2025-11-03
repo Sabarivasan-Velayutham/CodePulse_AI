@@ -1,0 +1,98 @@
+.analysis-card {
+  border-left: 4px solid #667eea;
+  transition: all 0.3s ease;
+}
+
+.analysis-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15) !important;
+  transform: translateX(4px);
+}
+
+.analysis-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.analysis-info {
+  flex: 1;
+}
+
+.file-path {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.file-path svg {
+  color: #667eea;
+}
+
+.timestamp {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  opacity: 0.7;
+}
+
+.timestamp svg {
+  font-size: 1rem;
+}
+
+.risk-badge {
+  text-align: center;
+}
+
+.risk-badge .MuiChip-root {
+  margin-bottom: 0.25rem;
+}
+
+.quick-stats {
+  display: flex;
+  justify-content: space-around;
+  gap: 1rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-item h6 {
+  color: #667eea;
+  font-weight: 600;
+}
+
+.ai-summary {
+  padding: 1rem;
+  background: #e7f3ff;
+  border-left: 4px solid #667eea;
+  border-radius: 4px;
+}
+
+.ai-summary .MuiTypography-body1 {
+  margin-top: 0.5rem;
+  line-height: 1.6;
+}
+
+.risk-list,
+.recommendation-list {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.risk-list li,
+.recommendation-list li {
+  margin-bottom: 0.5rem;
+}
+
+.module-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}

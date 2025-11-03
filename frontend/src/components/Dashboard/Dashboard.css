@@ -24,18 +24,75 @@
   color: white !important;
 }
 
+.welcome-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.welcome-header button {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.welcome-header button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .stat-card {
   text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #667eea;
+}
+
+.stat-card.critical::before {
+  background: #dc3545;
+}
+
+.stat-card.safe::before {
+  background: #28a745;
 }
 
 .stat-icon {
   font-size: 3rem;
   margin-bottom: 1rem;
+  animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 .stat-card h3 {
   color: #667eea;
   font-weight: 700;
+  font-size: 3rem;
+}
+
+.stat-card.critical h3 {
+  color: #dc3545;
+}
+
+.stat-card.safe h3 {
+  color: #28a745;
 }
 
 .loading-container {
@@ -55,6 +112,16 @@
   font-size: 5rem;
   margin-bottom: 1rem;
   opacity: 0.5;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.8;
+  }
 }
 
 .empty-state h6 {
@@ -64,4 +131,5 @@
 
 .empty-state .MuiTypography-body2 {
   color: #666;
+  margin-bottom: 1rem;
 }

@@ -1,0 +1,43 @@
+.graph-container {
+  margin: 2rem 0;
+  border-radius: 12px !important;
+}
+
+.graph-wrapper {
+  width: 100%;
+  overflow: hidden;
+  background: #f8f9fa;
+  border-radius: 0 0 12px 12px;
+}
+
+.graph-wrapper svg {
+  display: block;
+  margin: 0 auto;
+}
+
+.node circle {
+  transition: all 0.3s ease;
+}
+
+.node:hover circle {
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 8px rgba(0,0,0,0.3));
+}
+
+.link {
+  transition: opacity 0.3s ease;
+}
+
+.link-label {
+  pointer-events: none;
+  user-select: none;
+}
+
+.legend text {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.d3-tooltip {
+  pointer-events: none;
+  user-select: none;
+}

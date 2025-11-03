@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 import Dashboard from './components/Dashboard/Dashboard';
 import { apiService } from './services/api';
+import AnalysisCard from './components/AnalysisCard/AnalysisCard';
 
 function App() {
   const [isBackendHealthy, setIsBackendHealthy] = useState(false);
