@@ -3,6 +3,7 @@ Hackathon Project
 
 
 Commands:
+python -m venv venv
 .\venv\Scripts\activate.bat
 docker-compose up -d backend
 docker-compose logs -f backend
