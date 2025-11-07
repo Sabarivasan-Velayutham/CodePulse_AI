@@ -40,9 +40,13 @@ function DependencyGraph({ fileName, dependencies }) {
     
     svg.call(zoom);
 
+    const linkTypes = [
+      "CALL", "USE", "IMPORT", "CREATE", "EXTEND", "IMPLEMENT",
+      "CALLS", "IMPORTS", "READS", "WRITES", "DEPENDS_ON", "CONTAIN"
+    ];
     // Define arrow markers for links
     svg.append("defs").selectAll("marker")
-      .data(["CALLS", "IMPORTS", "READS", "WRITES"])
+      .data(linkTypes)
       .join("marker")
       .attr("id", d => `arrow-${d}`)
       .attr("viewBox", "0 -5 10 10")
@@ -69,11 +73,11 @@ function DependencyGraph({ fileName, dependencies }) {
     const simulation = d3.forceSimulation(data.nodes)
       .force("link", d3.forceLink(data.links)
         .id(d => d.id)
-        .distance(100))
+        .distance(120))
       .force("charge", d3.forceManyBody()
-        .strength(-400))
+        .strength(-450))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius(30));
+      .force("collision", d3.forceCollide().radius(35));
 
     // Create links
     const link = g.append("g")
@@ -93,7 +97,13 @@ function DependencyGraph({ fileName, dependencies }) {
       .join("text")
       .attr("class", "link-label")
       .attr("font-size", 10)
-      .attr("fill", "#666")
+      .attr("fill", "#333") // Darker text
+      .attr("font-weight", "bold")
+      .attr("stroke", "#ffffff") // Add a white stroke (outline)
+      .attr("stroke-width", 3) // Make the outline 3px wide
+      .attr("paint-order", "stroke") // Draw the stroke *behind* the fill
+      .attr("dy", -5) // Offset the text 5px "above" the center of the line
+      .attr("text-anchor", "middle") // Center the text on the line
       .text(d => d.type || "DEPENDS");
 
     // Create node groups
