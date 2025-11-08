@@ -3,24 +3,27 @@ Hackathon Project
 
 
 Commands:
-python -m venv venv
+
+- Open new terminal and go to backend Folder and run:
+python -m venv venv (only once)
 .\venv\Scripts\activate.bat
+
+- Open new terminal and go to frontend Folder and run:
+npm install (only once)
+npm start
+
+- Open new terminal and come to root folder and run:
 docker-compose up -d backend
 docker-compose logs -f backend
 
+To check if all services are up:
 python tests/test_scenarios.py
 
+To view ne04j data on UI:
 http://localhost:7474 (verify graph data)
 
 
-# 1. Start all services
-docker-compose up -d
-
-# 2. Check services
-docker ps
-# Should see: neo4j, backend, frontend
-
-# 3. Test Neo4j
+# Test Neo4j
 open http://localhost:7474
 # Query: MATCH (n) RETURN n LIMIT 10
 
@@ -37,7 +40,7 @@ python tests/test_scenarios.py
 # Should show: All systems ready
 
 
-
+- Loading hardcoded data via curl commands:
 curl -X POST http://localhost:8000/api/v1/analyze \
   -H "Content-Type: application/json" \
   -d '{
@@ -56,16 +59,5 @@ curl -X POST http://localhost:8000/api/v1/analyze \
   }'
 
 
-
-python scripts/load_demo_data.py load
-
-Since setting up actual GitHub webhooks takes time, create a simulator for demo
-frontend full completion 
-demo runner script needs to be improved 
-quick script 
-./scripts/quick_start.sh
-./scripts/stop_services.sh
-
-
-
-
+- Loading data via running file: 
+python scripts/load_demo_data.py

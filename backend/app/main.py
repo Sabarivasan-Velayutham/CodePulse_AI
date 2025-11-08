@@ -85,29 +85,33 @@ async def health_check():
         "ai_service": "connected"  # Placeholder
     }
 
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Middleware to log all requests"""
     start_time = time.time()
-    
+
     response = await call_next(request)
-    
+
     duration_ms = (time.time() - start_time) * 1000
-    
+
     request_logger.log_request(
         method=request.method,
         path=request.url.path,
         status_code=response.status_code,
         duration_ms=duration_ms
     )
-    
+
     return response
 
 # Add monitoring endpoint
+
+
 @app.get("/api/v1/monitoring/requests")
 async def get_recent_requests(limit: int = 50):
     """Get recent API requests"""
     return request_logger.get_recent_requests(limit)
+
 
 @app.get("/api/v1/monitoring/stats")
 async def get_request_stats():
