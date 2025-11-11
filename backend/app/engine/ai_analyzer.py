@@ -52,6 +52,8 @@ class AIAnalyzer:
             file_path, code_diff, dependencies)
 
         try:
+            import asyncio
+            
             # --- AI FIX: Add safety settings to prevent blocking ---
             safety_settings = {
                 'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
@@ -60,20 +62,29 @@ class AIAnalyzer:
                 'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
             }
 
-            # --- FINAL FIX: Increase max_output_tokens ---
+            # --- FINAL FIX: Increase max_output_tokens and add timeout ---
             config = {
                 'temperature': 0.2,
                 'top_p': 0.8,
                 'top_k': 40,
-                'max_output_tokens': 8192, # Was 2048, now increased
+                'max_output_tokens': 8192, # Reduced from 8192 to prevent timeout
             }
             # ---------------------------------------------
             
-            response = self.model.generate_content(
-                prompt,
-                generation_config=config,
-                safety_settings=safety_settings
-            )
+            # Run with timeout (30 seconds)
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.model.generate_content,
+                        prompt,
+                        generation_config=config,
+                        safety_settings=safety_settings
+                    ),
+                    timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                print("⚠️ AI analysis timed out after 60 seconds")
+                return self._fallback_analysis()
 
             # --- More robust check for empty/blocked content ---
             if not response.parts or not response.parts[0].text:

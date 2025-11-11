@@ -106,7 +106,7 @@ function AnalysisCard({ analysis }) {
               Direct Dependencies
             </Typography>
             <Typography variant="h6">
-              {analysis.dependencies.count.direct}
+              {analysis.dependencies.count.direct || 0}
             </Typography>
           </div>
           <div className="stat-item">
@@ -114,7 +114,15 @@ function AnalysisCard({ analysis }) {
               Indirect Dependencies
             </Typography>
             <Typography variant="h6">
-              {analysis.dependencies.count.indirect}
+              {analysis.dependencies.count.indirect || 0}
+            </Typography>
+          </div>
+          <div className="stat-item">
+            <Typography variant="caption" color="textSecondary">
+              Reverse Dependencies
+            </Typography>
+            <Typography variant="h6">
+              {(analysis.dependencies.count.reverse_direct || 0) + (analysis.dependencies.count.reverse_indirect || 0)}
             </Typography>
           </div>
           <div className="stat-item">
@@ -170,7 +178,7 @@ function AnalysisCard({ analysis }) {
           </Box>
 
           {/* Regulatory Concerns */}
-          {analysis.ai_insights.regulatory_concerns && (
+          {/* {analysis.ai_insights.regulatory_concerns && (
             <Box mb={2}>
               <Typography variant="h6" gutterBottom>
                 📋 Regulatory Concerns
@@ -179,7 +187,7 @@ function AnalysisCard({ analysis }) {
                 {analysis.ai_insights.regulatory_concerns}
               </Typography>
             </Box>
-          )}
+          )} */}
 
           {/* Recommendations */}
           {analysis.ai_insights.recommendations &&

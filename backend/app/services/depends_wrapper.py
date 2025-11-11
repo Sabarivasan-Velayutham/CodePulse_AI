@@ -137,18 +137,31 @@ class DependsAnalyzer:
         for cell in raw_data.get("cells", []):
             try:
                 # Get the source and destination file names using the index
-                source_name = module_names[cell.get("src")]
-                target_name = module_names[cell.get("dest")]
+                source_idx = cell.get("src")
+                dest_idx = cell.get("dest")
+                source_name = module_names[source_idx]
+                target_name = module_names[dest_idx]
+                
+                # Get full paths for source file to extract line numbers
+                source_full_path = raw_data.get("variables", [])[source_idx] if source_idx < len(raw_data.get("variables", [])) else None
 
                 # 'values' is a dictionary of relationship types
                 for rel_type, count in cell.get("values", {}).items():
+                    # Extract line numbers and code references from source file
+                    line_numbers, code_references = self._extract_code_references(
+                        source_full_path, target_name, rel_type.upper(), base_path
+                    )
+                    
                     # Create a dependency object for each type
                     dep = {
                         "source": source_name,
                         "target": target_name,
                         "type": rel_type.upper(),
                         "file": source_name, # The relation originates in the source file
-                        "line": 0 # Line number not provided in this view
+                        "line": line_numbers[0] if line_numbers else 0,
+                        "line_numbers": line_numbers,
+                        "code_reference": code_references[0] if code_references else "",
+                        "code_references": code_references
                     }
                     
                     # Categorize as direct or indirect
@@ -176,6 +189,81 @@ class DependsAnalyzer:
         }
 
         return result
+
+    def _extract_code_references(self, source_file_path: str, target_name: str, rel_type: str, base_path: str) -> tuple:
+        """
+        Extract line numbers and code references from source file
+        
+        Returns:
+            tuple: (list of line_numbers, list of code_references)
+        """
+        line_numbers = []
+        code_references = []
+        
+        if not source_file_path or not os.path.exists(source_file_path):
+            return line_numbers, code_references
+        
+        try:
+            # Get target class name (without .java extension)
+            target_class = target_name.replace('.java', '').split('/')[-1]
+            # Also get package path for more accurate matching
+            target_package = target_name.replace('.java', '').replace('/', '.').lower()
+            
+            with open(source_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            
+            for line_num, line in enumerate(lines, start=1):
+                line_stripped = line.strip()
+                if not line_stripped or line_stripped.startswith('//'):
+                    continue
+                
+                found = False
+                
+                if rel_type == "IMPORT":
+                    # Look for import statements - most specific match
+                    if line_stripped.startswith("import") and target_class in line_stripped:
+                        found = True
+                elif rel_type == "CALL":
+                    # Look for method calls on the class instance
+                    # Pattern: variableName.methodName( or classInstance.methodName(
+                    if target_class in line_stripped and '.' in line_stripped and '(' in line_stripped:
+                        # Check if it's a method call (has parentheses)
+                        found = True
+                elif rel_type == "USE":
+                    # Look for variable/field declarations or usage
+                    # Pattern: Type variableName or variableName.field
+                    if target_class in line_stripped:
+                        # Exclude imports and class declarations
+                        if not line_stripped.startswith("import") and not line_stripped.startswith("package"):
+                            found = True
+                elif rel_type == "CREATE":
+                    # Look for object instantiation (new keyword)
+                    if "new " in line_stripped and target_class in line_stripped:
+                        found = True
+                elif rel_type == "CONTAIN":
+                    # Look for class declarations, extends, implements
+                    if (f"class " in line_stripped and target_class in line_stripped) or \
+                       (f"extends {target_class}" in line_stripped) or \
+                       (f"implements {target_class}" in line_stripped):
+                        found = True
+                
+                if found:
+                    line_numbers.append(line_num)
+                    # Get context (2 lines before, current line, 2 lines after)
+                    context_start = max(0, line_num - 3)
+                    context_end = min(len(lines), line_num + 2)
+                    context_lines = lines[context_start:context_end]
+                    context = ''.join(context_lines)
+                    code_references.append(context.strip())
+                    
+                    # Limit to first 5 occurrences to avoid too much data
+                    if len(line_numbers) >= 5:
+                        break
+        
+        except Exception as e:
+            print(f"⚠️ Error extracting code references from {source_file_path}: {e}")
+        
+        return line_numbers, code_references
 
     def analyze_single_file(self, file_path: str) -> Dict:
         """
@@ -231,6 +319,39 @@ class DependsAnalyzer:
         for dep in full_analysis["dependencies"]["indirect"]:
             if file_name == dep["source"]:
                 file_deps["indirect_dependencies"].append(dep)
+        
+        # NEW: Find reverse dependencies (files that depend on this file)
+        reverse_direct = []
+        reverse_indirect = []
+        
+        for dep in full_analysis["dependencies"]["direct"]:
+            if file_name == dep["target"]:  # This file is the target
+                reverse_direct.append({
+                    "source": dep["source"],  # File that depends on us
+                    "target": file_name,
+                    "type": dep["type"],
+                    "file": dep["source"],
+                    "line": dep.get("line", 0),
+                    "line_numbers": dep.get("line_numbers", []),
+                    "code_reference": dep.get("code_reference", ""),
+                    "code_references": dep.get("code_references", [])
+                })
+        
+        for dep in full_analysis["dependencies"]["indirect"]:
+            if file_name == dep["target"]:  # This file is the target
+                reverse_indirect.append({
+                    "source": dep["source"],  # File that depends on us
+                    "target": file_name,
+                    "type": dep["type"],
+                    "file": dep["source"],
+                    "line": dep.get("line", 0),
+                    "line_numbers": dep.get("line_numbers", []),
+                    "code_reference": dep.get("code_reference", ""),
+                    "code_references": dep.get("code_references", [])
+                })
+        
+        file_deps["reverse_direct_dependencies"] = reverse_direct
+        file_deps["reverse_indirect_dependencies"] = reverse_indirect
 
         return file_deps
 

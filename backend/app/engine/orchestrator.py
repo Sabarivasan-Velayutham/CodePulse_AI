@@ -56,11 +56,15 @@ class AnalysisOrchestrator:
             print("Step 2/5: Storing dependency graph...")
             await self._store_in_neo4j(file_path, dependencies)
             
-            # Step 3: AI Analysis
+            # Step 3: AI Analysis (non-blocking - continue even if it fails)
             print("Step 3/5: Running AI analysis...")
-            ai_insights = await self.ai_analyzer.analyze_impact(
-                file_path, code_diff, dependencies
-            )
+            try:
+                ai_insights = await self.ai_analyzer.analyze_impact(
+                    file_path, code_diff, dependencies
+                )
+            except Exception as ai_error:
+                print(f"⚠️ AI analysis failed (non-blocking): {ai_error}")
+                ai_insights = self.ai_analyzer._fallback_analysis()
             
             # Step 4: Risk Scoring
             print("Step 4/5: Calculating risk score...")
@@ -113,7 +117,7 @@ class AnalysisOrchestrator:
         return result
     
     async def _store_in_neo4j(self, file_path: str, dependencies: Dict):
-        """Store dependency graph in Neo4j"""
+        """Store dependency graph in Neo4j (forward and reverse)"""
         try:
             # Create or update module node
             file_name = file_path.split("/")[-1]
@@ -127,12 +131,86 @@ class AnalysisOrchestrator:
                 }
             )
             
-            # Create dependency relationships
+            # Store forward dependencies (this file depends on others)
+            # Direct dependencies
             for dep in dependencies.get("direct_dependencies", []):
+                target_name = dep.get("target", "Unknown")
+                await neo4j_client.create_module_node(
+                    name=target_name,
+                    properties={"path": f"unknown/{target_name}"}
+                )
+                line_nums = dep.get("line_numbers", [])
+                code_refs = dep.get("code_references", [])
+                line_num_str = ",".join(map(str, line_nums)) if line_nums else str(dep.get("line", 0))
+                code_ref_str = " | ".join(code_refs[:3]) if code_refs else dep.get("code_reference", "")
+                
                 await neo4j_client.create_dependency(
                     source=file_name,
-                    target=dep.get("target", "Unknown"),
-                    rel_type=dep.get("type", "DEPENDS_ON")
+                    target=target_name,
+                    rel_type=dep.get("type", "DEPENDS_ON"),
+                    line_number=line_num_str,
+                    code_reference=code_ref_str
+                )
+            
+            # Indirect dependencies
+            for dep in dependencies.get("indirect_dependencies", []):
+                target_name = dep.get("target", "Unknown")
+                await neo4j_client.create_module_node(
+                    name=target_name,
+                    properties={"path": f"unknown/{target_name}"}
+                )
+                line_nums = dep.get("line_numbers", [])
+                code_refs = dep.get("code_references", [])
+                line_num_str = ",".join(map(str, line_nums)) if line_nums else str(dep.get("line", 0))
+                code_ref_str = " | ".join(code_refs[:3]) if code_refs else dep.get("code_reference", "")
+                
+                await neo4j_client.create_dependency(
+                    source=file_name,
+                    target=target_name,
+                    rel_type=dep.get("type", "DEPENDS_ON"),
+                    line_number=line_num_str,
+                    code_reference=code_ref_str
+                )
+            
+            # Store reverse dependencies (others depend on this file)
+            # Direct reverse dependencies
+            for dep in dependencies.get("reverse_direct_dependencies", []):
+                source_name = dep.get("source", "Unknown")
+                await neo4j_client.create_module_node(
+                    name=source_name,
+                    properties={"path": f"unknown/{source_name}"}
+                )
+                line_nums = dep.get("line_numbers", [])
+                code_refs = dep.get("code_references", [])
+                line_num_str = ",".join(map(str, line_nums)) if line_nums else str(dep.get("line", 0))
+                code_ref_str = " | ".join(code_refs[:3]) if code_refs else dep.get("code_reference", "")
+                
+                await neo4j_client.create_dependency(
+                    source=source_name,
+                    target=file_name,
+                    rel_type=dep.get("type", "DEPENDS_ON"),
+                    line_number=line_num_str,
+                    code_reference=code_ref_str
+                )
+            
+            # Indirect reverse dependencies
+            for dep in dependencies.get("reverse_indirect_dependencies", []):
+                source_name = dep.get("source", "Unknown")
+                await neo4j_client.create_module_node(
+                    name=source_name,
+                    properties={"path": f"unknown/{source_name}"}
+                )
+                line_nums = dep.get("line_numbers", [])
+                code_refs = dep.get("code_references", [])
+                line_num_str = ",".join(map(str, line_nums)) if line_nums else str(dep.get("line", 0))
+                code_ref_str = " | ".join(code_refs[:3]) if code_refs else dep.get("code_reference", "")
+                
+                await neo4j_client.create_dependency(
+                    source=source_name,
+                    target=file_name,
+                    rel_type=dep.get("type", "DEPENDS_ON"),
+                    line_number=line_num_str,
+                    code_reference=code_ref_str
                 )
             
             print("   ✅ Graph updated in Neo4j")
@@ -154,10 +232,12 @@ class AnalysisOrchestrator:
     ) -> Dict:
         """Compile all results into final format"""
         
-        # Extract affected modules
+        # Extract affected modules (forward and reverse)
         affected_modules = []
         for dep in dependencies.get("direct_dependencies", []):
             affected_modules.append(dep.get("target"))
+        for dep in dependencies.get("reverse_direct_dependencies", []):
+            affected_modules.append(dep.get("source"))
         
         result = {
             "id": analysis_id,
@@ -170,12 +250,18 @@ class AnalysisOrchestrator:
             "dependencies": {
                 "direct": dependencies.get("direct_dependencies", []),
                 "indirect": dependencies.get("indirect_dependencies", []),
+                "reverse_direct": dependencies.get("reverse_direct_dependencies", []),
+                "reverse_indirect": dependencies.get("reverse_indirect_dependencies", []),
                 "count": {
                     "direct": len(dependencies.get("direct_dependencies", [])),
                     "indirect": len(dependencies.get("indirect_dependencies", [])),
+                    "reverse_direct": len(dependencies.get("reverse_direct_dependencies", [])),
+                    "reverse_indirect": len(dependencies.get("reverse_indirect_dependencies", [])),
                     "total": (
                         len(dependencies.get("direct_dependencies", [])) +
-                        len(dependencies.get("indirect_dependencies", []))
+                        len(dependencies.get("indirect_dependencies", [])) +
+                        len(dependencies.get("reverse_direct_dependencies", [])) +
+                        len(dependencies.get("reverse_indirect_dependencies", []))
                     )
                 }
             },

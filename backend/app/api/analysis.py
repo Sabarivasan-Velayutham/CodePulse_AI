@@ -91,45 +91,149 @@ async def list_analyses(limit: int = 10):
 
 @router.get("/graph/{file_name}")
 async def get_dependency_graph(file_name: str):
-    """Get dependency graph for a file"""
+    """Get dependency graph for a file (forward and reverse dependencies)"""
     from app.utils.neo4j_client import neo4j_client
+    from urllib.parse import unquote
+    
+    # Decode URL-encoded file name
+    file_name = unquote(file_name)
     
     try:
-        dependencies = await neo4j_client.get_dependencies(file_name)
+        # Try to get dependencies from Neo4j
+        try:
+            dependencies = await neo4j_client.get_dependencies(file_name)
+        except Exception as neo4j_error:
+            print(f"⚠️ Neo4j query failed: {neo4j_error}")
+            # Fallback: Try to get from analysis results
+            dependencies = []
+            file_name_short = file_name.split("/")[-1]  # Get just filename
+            
+            for analysis in analysis_results.values():
+                analysis_file = analysis.get("file_path", "")
+                if analysis_file.endswith(file_name) or analysis_file.endswith(file_name_short):
+                    # Build graph from analysis dependencies
+                    deps = analysis.get("dependencies", {})
+                    
+                    # Add forward dependencies
+                    for dep in deps.get("direct", []) + deps.get("indirect", []):
+                        target = dep.get("target", "Unknown")
+                        if target:
+                            dependencies.append({
+                                "module": target,
+                                "distance": 1,
+                                "relationships": [dep.get("type", "DEPENDS_ON")],
+                                "line_numbers": [dep.get("line", 0)] if dep.get("line") else [],
+                                "code_references": [dep.get("code_reference", "")] if dep.get("code_reference") else [],
+                                "direction": "forward"
+                            })
+                    
+                    # Add reverse dependencies
+                    for dep in deps.get("reverse_direct", []) + deps.get("reverse_indirect", []):
+                        source = dep.get("source", "Unknown")
+                        if source:
+                            dependencies.append({
+                                "module": source,
+                                "distance": 1,
+                                "relationships": [dep.get("type", "DEPENDS_ON")],
+                                "line_numbers": [dep.get("line", 0)] if dep.get("line") else [],
+                                "code_references": [dep.get("code_reference", "")] if dep.get("code_reference") else [],
+                                "direction": "reverse"
+                            })
+                    break
         
         # Transform to graph format for visualization
         nodes = []
         links = []
+        nodes_map = {}  # Track nodes to avoid duplicates
         
         # Add source node
-        nodes.append({
+        source_node = {
             "id": file_name,
             "name": file_name,
-            "risk": "source"
-        })
+            "risk": "source",
+            "path": ""
+        }
+        nodes.append(source_node)
+        nodes_map[file_name] = source_node
         
-        # Add dependency nodes and links
-        seen_nodes = {file_name}
+        # Process all dependencies (forward and reverse)
         for dep in dependencies:
-            module = dep["module"]
-            if module not in seen_nodes:
-                nodes.append({
-                    "id": module,
-                    "name": module,
-                    "risk": "normal"
-                })
-                seen_nodes.add(module)
-            
-            links.append({
-                "source": file_name,
-                "target": module,
-                "type": dep["relationships"][0] if dep["relationships"] else "DEPENDS_ON"
-            })
+            try:
+                module = dep.get("module")
+                if not module:
+                    continue
+                    
+                direction = dep.get("direction", "forward")
+                rel_types = dep.get("relationships", [])
+                line_numbers = dep.get("line_numbers", [])
+                code_refs = dep.get("code_references", [])
+                
+                # Determine risk level based on distance
+                distance = dep.get("distance", 1)
+                if distance == 1:
+                    risk = "high" if direction == "reverse" else "medium"
+                elif distance == 2:
+                    risk = "medium"
+                else:
+                    risk = "low"
+                
+                # Add node if not seen
+                if module not in nodes_map:
+                    node = {
+                        "id": module,
+                        "name": module,
+                        "risk": risk,
+                        "path": ""
+                    }
+                    nodes.append(node)
+                    nodes_map[module] = node
+                
+                # Create link
+                if direction == "reverse":
+                    # Reverse: other module depends on source file
+                    source = module
+                    target = file_name
+                else:
+                    # Forward: source file depends on other module
+                    source = file_name
+                    target = module
+                
+                # Safely extract values
+                rel_type = rel_types[0] if rel_types and len(rel_types) > 0 else "DEPENDS_ON"
+                line_num = line_numbers[0] if line_numbers and len(line_numbers) > 0 and line_numbers[0] is not None else None
+                code_ref = code_refs[0] if code_refs and len(code_refs) > 0 and code_refs[0] else ""
+                
+                link = {
+                    "source": source,
+                    "target": target,
+                    "type": rel_type,
+                    "distance": distance,
+                    "direction": direction,
+                    "line_number": line_num,
+                    "code_reference": code_ref if code_ref else ""
+                }
+                links.append(link)
+            except Exception as e:
+                print(f"⚠️ Error processing dependency: {e}")
+                continue
         
+        # If no dependencies found, return empty graph with just source node
         return {
             "nodes": nodes,
             "links": links
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Error getting dependency graph: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return empty graph instead of error to prevent UI crash
+        return {
+            "nodes": [{
+                "id": file_name,
+                "name": file_name,
+                "risk": "source",
+                "path": ""
+            }],
+            "links": []
+        }
