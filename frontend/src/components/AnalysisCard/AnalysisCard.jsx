@@ -77,6 +77,18 @@ function AnalysisCard({ analysis }) {
                 {formatTimestamp(analysis.timestamp)}
               </Typography>
             </div>
+            {analysis.commit_sha && analysis.commit_sha !== "manual" && (
+              <div className="commit-info" style={{ marginTop: '0.5rem' }}>
+                <Typography variant="caption" color="textSecondary" style={{ display: 'block' }}>
+                  <strong>Commit:</strong> {analysis.commit_sha.length > 8 ? analysis.commit_sha.substring(0, 8) : analysis.commit_sha}
+                </Typography>
+                {analysis.commit_message && (
+                  <Typography variant="caption" color="textSecondary" style={{ display: 'block', fontStyle: 'italic' }}>
+                    {analysis.commit_message}
+                  </Typography>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="risk-badge">

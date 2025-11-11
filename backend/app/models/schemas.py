@@ -89,3 +89,5 @@ class AnalysisRequest(BaseModel):
     file_path: str = Field(..., description="Path to file to analyze")
     repository: str = Field(..., description="Repository name")
     diff: Optional[str] = Field(None, description="Code diff (optional)")
+    commit_sha: Optional[str] = Field(None, description="Commit SHA")
+    commit_message: Optional[str] = Field(None, description="Commit message")

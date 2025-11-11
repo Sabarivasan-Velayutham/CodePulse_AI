@@ -23,12 +23,40 @@ async def trigger_analysis(request: AnalysisRequest):
     """
     print(f"🔍 Manual analysis requested for: {request.file_path}")
     
+    # Debug: Print raw request data - check if fields are in the request body
+    import json
     try:
+        # Get the raw request body to see what was actually sent
+        from fastapi import Request
+        # Note: We can't access raw body here easily, so we'll check the parsed model
+        request_dict = request.dict()
+        commit_data = {k: v for k, v in request_dict.items() if k in ['commit_sha', 'commit_message']}
+        print(f"   📥 Received commit data: {json.dumps(commit_data, default=str)}")
+    except Exception as e:
+        print(f"   ⚠️ Debug error: {e}")
+    
+    print(f"   Commit SHA: {request.commit_sha} (type: {type(request.commit_sha).__name__})")
+    print(f"   Commit Message: {request.commit_message} (type: {type(request.commit_message).__name__})")
+    
+    try:
+        # Handle commit_sha and commit_message
+        # Pydantic will set Optional fields to None if not provided or if null in JSON
+        # Convert None to empty string, then check if empty
+        commit_sha = str(request.commit_sha) if request.commit_sha is not None else ""
+        commit_message = str(request.commit_message) if request.commit_message is not None else ""
+        
+        # Use defaults if empty
+        if not commit_sha or not commit_sha.strip():
+            commit_sha = "manual"
+        if not commit_message:
+            commit_message = ""
+        
         result = await orchestrator.analyze_change(
             file_path=request.file_path,
             code_diff=request.diff or "",
-            commit_sha="manual",
-            repository=request.repository
+            commit_sha=commit_sha,
+            repository=request.repository,
+            commit_message=commit_message
         )
         
         # Store result

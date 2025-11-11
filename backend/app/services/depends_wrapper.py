@@ -193,6 +193,7 @@ class DependsAnalyzer:
     def _extract_code_references(self, source_file_path: str, target_name: str, rel_type: str, base_path: str) -> tuple:
         """
         Extract line numbers and code references from source file
+        Supports both Java and Python files
         
         Returns:
             tuple: (list of line_numbers, list of code_references)
@@ -204,48 +205,89 @@ class DependsAnalyzer:
             return line_numbers, code_references
         
         try:
-            # Get target class name (without .java extension)
-            target_class = target_name.replace('.java', '').split('/')[-1]
-            # Also get package path for more accurate matching
-            target_package = target_name.replace('.java', '').replace('/', '.').lower()
+            # Detect file type
+            is_python = source_file_path.endswith('.py')
+            
+            # Get target class/module name
+            if is_python:
+                target_class = target_name.replace('.py', '').split('/')[-1]
+                target_module = target_name.replace('.py', '').replace('/', '.').replace('\\', '.')
+            else:
+                target_class = target_name.replace('.java', '').split('/')[-1]
+                target_module = target_name.replace('.java', '').replace('/', '.').lower()
             
             with open(source_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = f.readlines()
             
             for line_num, line in enumerate(lines, start=1):
                 line_stripped = line.strip()
-                if not line_stripped or line_stripped.startswith('//'):
+                if not line_stripped:
                     continue
+                
+                # Skip comments
+                if is_python:
+                    if line_stripped.startswith('#'):
+                        continue
+                else:
+                    if line_stripped.startswith('//'):
+                        continue
                 
                 found = False
                 
                 if rel_type == "IMPORT":
-                    # Look for import statements - most specific match
-                    if line_stripped.startswith("import") and target_class in line_stripped:
-                        found = True
-                elif rel_type == "CALL":
-                    # Look for method calls on the class instance
-                    # Pattern: variableName.methodName( or classInstance.methodName(
-                    if target_class in line_stripped and '.' in line_stripped and '(' in line_stripped:
-                        # Check if it's a method call (has parentheses)
-                        found = True
-                elif rel_type == "USE":
-                    # Look for variable/field declarations or usage
-                    # Pattern: Type variableName or variableName.field
-                    if target_class in line_stripped:
-                        # Exclude imports and class declarations
-                        if not line_stripped.startswith("import") and not line_stripped.startswith("package"):
+                    if is_python:
+                        # Python: import module or from module import class
+                        if (line_stripped.startswith("import ") and target_class in line_stripped) or \
+                           (line_stripped.startswith("from ") and target_module in line_stripped):
                             found = True
+                    else:
+                        # Java: import statements
+                        if line_stripped.startswith("import") and target_class in line_stripped:
+                            found = True
+                elif rel_type == "CALL":
+                    if is_python:
+                        # Python: method calls - object.method( or Class.method(
+                        if target_class in line_stripped and '.' in line_stripped and '(' in line_stripped:
+                            found = True
+                    else:
+                        # Java: method calls
+                        if target_class in line_stripped and '.' in line_stripped and '(' in line_stripped:
+                            found = True
+                elif rel_type == "USE":
+                    if is_python:
+                        # Python: variable/attribute usage
+                        if target_class in line_stripped:
+                            if not line_stripped.startswith("import") and not line_stripped.startswith("from") and \
+                               not line_stripped.startswith("class") and not line_stripped.startswith("def"):
+                                found = True
+                    else:
+                        # Java: variable/field usage
+                        if target_class in line_stripped:
+                            if not line_stripped.startswith("import") and not line_stripped.startswith("package"):
+                                found = True
                 elif rel_type == "CREATE":
-                    # Look for object instantiation (new keyword)
-                    if "new " in line_stripped and target_class in line_stripped:
-                        found = True
+                    if is_python:
+                        # Python: object instantiation - Class( or Class()
+                        if target_class in line_stripped and '(' in line_stripped:
+                            # Check if it's not a function definition
+                            if not line_stripped.startswith("def ") and not line_stripped.startswith("class "):
+                                found = True
+                    else:
+                        # Java: object instantiation (new keyword)
+                        if "new " in line_stripped and target_class in line_stripped:
+                            found = True
                 elif rel_type == "CONTAIN":
-                    # Look for class declarations, extends, implements
-                    if (f"class " in line_stripped and target_class in line_stripped) or \
-                       (f"extends {target_class}" in line_stripped) or \
-                       (f"implements {target_class}" in line_stripped):
-                        found = True
+                    if is_python:
+                        # Python: class definitions, inheritance
+                        if (f"class {target_class}" in line_stripped) or \
+                           (f"({target_class}" in line_stripped and "class" in lines[max(0, line_num-2):line_num]):
+                            found = True
+                    else:
+                        # Java: class declarations, extends, implements
+                        if (f"class " in line_stripped and target_class in line_stripped) or \
+                           (f"extends {target_class}" in line_stripped) or \
+                           (f"implements {target_class}" in line_stripped):
+                            found = True
                 
                 if found:
                     line_numbers.append(line_num)
@@ -271,18 +313,42 @@ class DependsAnalyzer:
         This now scans the entire 'src' root to build a full graph.
         """
         
+        # Detect language from file extension
+        file_ext = Path(file_path).suffix.lower()
+        language_map = {
+            '.java': 'java',
+            '.py': 'python',
+            '.cpp': 'cpp',
+            '.c': 'c',
+            '.js': 'javascript',
+            '.ts': 'typescript'
+        }
+        language = language_map.get(file_ext, 'java')  # Default to java
+        
         # --- FIX: Find the 'src' directory to scan ---
         # We assume the file_path is like 'sample-repo/banking-app/src/payment/File.java'
-        # We want to find 'sample-repo/banking-app/src'
+        # or 'sample-repo/python-analytics/fraud_analysis.py'
+        # We want to find the root directory (either 'src' or the repo root)
         p = Path(file_path)
         src_root = p
+        found_src = False
+        
+        # First, try to find 'src' directory
         while src_root.name != 'src' and src_root.parent != src_root:
             src_root = src_root.parent
+            if src_root.name == 'src':
+                found_src = True
+                break
         
-        # If 'src' not found, fall back to the file's directory
-        if src_root.name != 'src':
-            print(f"⚠️ 'src' directory not in path. Falling back to {p.parent}")
-            directory_to_scan = str(p.parent)
+        # If 'src' not found, use the parent directory (e.g., python-analytics)
+        if not found_src:
+            # For Python files, use the directory containing the file
+            # For Java files, try to find a common parent
+            if language == 'python':
+                directory_to_scan = str(p.parent)
+            else:
+                print(f"⚠️ 'src' directory not in path. Falling back to {p.parent}")
+                directory_to_scan = str(p.parent)
         else:
             directory_to_scan = str(src_root)
         
@@ -295,8 +361,9 @@ class DependsAnalyzer:
              directory_to_scan = "/" + directory_to_scan
         # ----------------------------------------------------
 
-        # Run full analysis on the 'src' root
-        full_analysis = self.analyze_code(directory_to_scan)
+        # Run full analysis on the directory with detected language
+        print(f"🔍 Detected language: {language} for file: {file_path}")
+        full_analysis = self.analyze_code(directory_to_scan, language=language)
 
         # Filter to just this file
         file_name = os.path.basename(file_path)

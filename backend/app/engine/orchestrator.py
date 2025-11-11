@@ -23,7 +23,8 @@ class AnalysisOrchestrator:
         file_path: str,
         code_diff: str,
         commit_sha: str,
-        repository: str
+        repository: str,
+        commit_message: str = ""
     ) -> Dict:
         """
         Main orchestration method
@@ -82,7 +83,8 @@ class AnalysisOrchestrator:
                 dependencies,
                 ai_insights,
                 risk_score,
-                start_time
+                start_time,
+                commit_message
             )
             
             duration = (datetime.now() - start_time).total_seconds()
@@ -228,7 +230,8 @@ class AnalysisOrchestrator:
         dependencies: Dict,
         ai_insights: Dict,
         risk_score: Dict,
-        start_time: datetime
+        start_time: datetime,
+        commit_message: str = ""
     ) -> Dict:
         """Compile all results into final format"""
         
@@ -244,6 +247,7 @@ class AnalysisOrchestrator:
             "timestamp": datetime.now().isoformat(),
             "duration_seconds": (datetime.now() - start_time).total_seconds(),
             "commit_sha": commit_sha,
+            "commit_message": commit_message,
             "repository": repository,
             "file_path": file_path,
             "risk_score": risk_score,

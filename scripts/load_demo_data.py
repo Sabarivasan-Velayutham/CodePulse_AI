@@ -17,7 +17,8 @@ DEMO_DATA = [
     {
         "scenario_name": "Scenario 1: PaymentProcessor Core Logic - Fee Calculation Integration",
         "file_path": "sample-repo/banking-app/src/payment/PaymentProcessor.java",
-        "commit_sha": "demo_payment_processor_fee_change",
+        "commit_sha": "a1b2c3d4e5f6g7h8i9j0k1",
+        "commit_message": "feat: Add premium member fee discount in payment processing",
         "repository": "banking-app-demo",
         "diff": """
 --- a/src/payment/PaymentProcessor.java
@@ -40,7 +41,8 @@ DEMO_DATA = [
     {
         "scenario_name": "Scenario 2: FeeCalculator International Fee Structure Change",
         "file_path": "sample-repo/banking-app/src/payment/FeeCalculator.java",
-        "commit_sha": "demo_fee_calculator_international",
+        "commit_sha": "b2c3d4e5f6g7h8i9j0k1l2",
+        "commit_message": "feat: Implement tiered fee structure for international transfers",
         "repository": "banking-app-demo",
         "diff": """
 --- a/src/payment/FeeCalculator.java
@@ -66,7 +68,8 @@ DEMO_DATA = [
     {
         "scenario_name": "Scenario 3: FraudDetection Threshold Change - Security Impact",
         "file_path": "sample-repo/banking-app/src/fraud/FraudDetection.java",
-        "commit_sha": "demo_fraud_detection_threshold",
+        "commit_sha": "c3d4e5f6g7h8i9j0k1l2m3",
+        "commit_message": "fix: Lower fraud detection thresholds for improved security",
         "repository": "banking-app-demo",
         "diff": """
 --- a/src/fraud/FraudDetection.java
@@ -93,7 +96,8 @@ DEMO_DATA = [
     {
         "scenario_name": "Scenario 4: TransactionDAO Schema Change - Add Currency Column",
         "file_path": "sample-repo/banking-app/src/database/TransactionDAO.java",
-        "commit_sha": "demo_transaction_dao_schema",
+        "commit_sha": "d4e5f6g7h8i9j0k1l2m3n4",
+        "commit_message": "feat: Add currency column to transaction schema for multi-currency support",
         "repository": "banking-app-demo",
         "diff": """
 --- a/src/database/TransactionDAO.java
@@ -123,7 +127,8 @@ DEMO_DATA = [
     {
         "scenario_name": "Scenario 5: AccountBalance Calculation - Include Pending Transactions",
         "file_path": "sample-repo/banking-app/src/account/AccountBalance.java",
-        "commit_sha": "demo_account_balance_pending",
+        "commit_sha": "e5f6g7h8i9j0k1l2m3n4o5",
+        "commit_message": "feat: Include pending transactions in balance calculation",
         "repository": "banking-app-demo",
         "diff": """
 --- a/src/account/AccountBalance.java
@@ -154,6 +159,102 @@ DEMO_DATA = [
          
          return balance;
      }
+"""
+    },
+    {
+        "scenario_name": "Scenario 6: FraudAnalysis Risk Threshold Adjustment - Lower ML Threshold",
+        "file_path": "sample-repo/python-analytics/fraud_analysis.py",
+        "commit_sha": "a7f3b2c1d4e5f6g7h8i9j0",
+        "commit_message": "feat: Lower ML fraud detection threshold to improve sensitivity",
+        "repository": "python-analytics-demo",
+        "diff": """
+--- a/fraud_analysis.py
++++ b/fraud_analysis.py
+@@ -24,7 +24,7 @@ class FraudAnalyzer:
+         self.db = db_connection
+         self.monitor = TransactionMonitor(db_connection)
+         self.report_generator = ReportGenerator()
+-        self.risk_threshold = 0.85
++        self.risk_threshold = 0.75  # CHANGED: Lowered from 0.85 to 0.75 for better fraud detection
+         
+     def analyze_customer_behavior(self, customer_id: str) -> Dict:
+         \"\"\"
+@@ -200,7 +200,7 @@ class FraudAnalyzer:
+         # Get historical fraud alerts
+         alerts = self.monitor.get_fraud_alerts(customer_id)
+         
+-        if analysis['risk_score'] > 0.85:
++        if analysis['risk_score'] > 0.75:  # CHANGED: Consistent threshold update
+             risk_level = "CRITICAL"
+         elif analysis['risk_score'] > 0.65:
+             risk_level = "HIGH"
+"""
+    },
+    {
+        "scenario_name": "Scenario 7: TransactionMonitor Alert Threshold - Real-time Monitoring Sensitivity",
+        "file_path": "sample-repo/python-analytics/transaction_monitor.py",
+        "commit_sha": "b8e4c3d2f5a6b7c8d9e0f1a",
+        "commit_message": "fix: Adjust alert threshold for real-time fraud monitoring",
+        "repository": "python-analytics-demo",
+        "diff": """
+--- a/transaction_monitor.py
++++ b/transaction_monitor.py
+@@ -20,7 +20,7 @@ class TransactionMonitor:
+     
+     def __init__(self, db_connection):
+         self.db = db_connection
+-        self.alert_threshold = 0.80
++        self.alert_threshold = 0.70  # CHANGED: Lowered alert threshold from 0.80 to 0.70 for earlier fraud detection
+     
+     def get_customer_transactions(self, customer_id: str, days: int = 90) -> List[Dict]:
+         \"\"\"
+@@ -107,7 +107,7 @@ class TransactionMonitor:
+     def monitor_real_time(self):
+         \"\"\"
+         Real-time monitoring (would run as background service)
++        CHANGED: Now includes additional validation checks
+         \"\"\"
+         logger.info("Starting real-time transaction monitoring...")
+         
+@@ -115,7 +115,7 @@ class TransactionMonitor:
+         query = \"\"\"
+         SELECT *
+         FROM transactions
+-        WHERE processed_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
++        WHERE processed_at > DATE_SUB(NOW(), INTERVAL 3 MINUTE)  # CHANGED: Reduced window from 5 to 3 minutes
+         AND requires_manual_review = TRUE
+         \"\"\"
+"""
+    },
+    {
+        "scenario_name": "Scenario 8: ReportGenerator Compliance Report - Add Regulatory Sections",
+        "file_path": "sample-repo/python-analytics/reporting.py",
+        "commit_sha": "c9f5d4e3a6b7c8d9e0f1a2b",
+        "commit_message": "feat: Add enhanced compliance reporting with regulatory sections",
+        "repository": "python-analytics-demo",
+        "diff": """
+--- a/reporting.py
++++ b/reporting.py
+@@ -31,7 +31,7 @@ class ReportGenerator:
+     def generate_compliance_report(self, start_date: datetime, end_date: datetime) -> Dict:
+         \"\"\"Generate compliance report for regulatory requirements\"\"\"
+         report = {
+-            "report_type": "COMPLIANCE",
++            "report_type": "ENHANCED_COMPLIANCE",  # CHANGED: Updated report type
+             "period_start": start_date.strftime("%Y-%m-%d"),
+             "period_end": end_date.strftime("%Y-%m-%d"),
+             "generated_at": datetime.now().isoformat(),
+@@ -39,6 +39,9 @@ class ReportGenerator:
+                 "high_value_transactions": [],
+                 "suspicious_activities": [],
+                 "regulatory_alerts": []
++                # NEW: Added additional compliance sections
++                "aml_checks": [],  # Anti-Money Laundering checks
++                "kyc_verification": []  # Know Your Customer verification
+             }
+         }
+         
+         return report
 """
     }
 ]
@@ -188,11 +289,28 @@ async def load_demo_data():
                 print(
                     f"📝 Triggering scenario {i}/{len(DEMO_DATA)}: {data['scenario_name']}")
 
+                # Extract commit info - ensure they're always strings
+                commit_sha = data.get("commit_sha", "")
+                commit_message = data.get("commit_message", "")
+                
+                # Convert to strings - never None
+                commit_sha = str(commit_sha) if commit_sha else ""
+                commit_message = str(commit_message) if commit_message else ""
+                
+                # Build request data - ALWAYS include commit fields (even if empty)
                 request_data = {
                     "file_path": data["file_path"],
                     "repository": data["repository"],
-                    "diff": data["diff"]
+                    "diff": data["diff"],
+                    "commit_sha": commit_sha,  # Always include, even if empty
+                    "commit_message": commit_message  # Always include, even if empty
                 }
+                
+                # Debug: Print what we're sending
+                print(f"   📤 Sending commit_sha: '{commit_sha}'")
+                msg_preview = commit_message[:50] + "..." if len(commit_message) > 50 else commit_message
+                print(f"   📤 Sending commit_message: '{msg_preview}'")
+                print(f"   📤 Request keys: {list(request_data.keys())}")
 
                 try:
                     # Give each analysis a long timeout
@@ -205,7 +323,7 @@ async def load_demo_data():
                     if response.status_code == 200:
                         result = response.json()
                         risk = result.get('risk_score', {})
-                        print(f"   ✅ Loaded: {data['commit_sha']}")
+                        print(f"   ✅ Loaded: {commit_sha[:8] if commit_sha else 'N/A'}")
                         print(f"   📊 Risk: {risk.get('score')}/10 - {risk.get('level')}")
                     else:
                         print(
