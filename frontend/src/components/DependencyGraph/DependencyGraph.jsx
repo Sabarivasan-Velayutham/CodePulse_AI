@@ -499,13 +499,13 @@ function DependencyGraph({ fileName, dependencies }) {
                             <Typography variant="body2" fontWeight="bold">
                               {conn.direction === 'reverse' ? '←' : '→'} {conn.otherNode}
                             </Typography>
-                            <Chip 
+                            {/* <Chip 
                               label={conn.direction === 'reverse' ? 'Depends on this' : 'This depends on'}
                               size="small"
                               variant="outlined"
                               color={conn.direction === 'reverse' ? 'error' : 'default'}
                               sx={{ fontSize: '0.7rem', height: '20px' }}
-                            />
+                            /> */}
                             {conn.count > 1 && (
                               <Chip 
                                 label={`${conn.count}x`}
