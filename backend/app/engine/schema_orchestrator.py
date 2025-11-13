@@ -82,11 +82,19 @@ class SchemaChangeOrchestrator:
                 else:
                     raise ValueError(f"Could not parse schema change from SQL statement: {sql_statement[:100]}")
             
+            # If we have a generic ALTER_TABLE, try to query PostgreSQL for actual change details
+            if schema_change.change_type == "ALTER_TABLE" and not schema_change.column_name:
+                schema_change = await self._enhance_schema_change_from_db(schema_change, database_name)
+            
             print(f"   ✅ Change Type: {schema_change.change_type}")
             print(f"   ✅ Table: {schema_change.table_name}")
             if schema_change.column_name:
                 print(f"   ✅ Column: {schema_change.column_name}")
-            elif schema_change.change_type == "ALTER_TABLE":
+            if schema_change.old_value:
+                print(f"   ✅ Old Value: {schema_change.old_value}")
+            if schema_change.new_value:
+                print(f"   ✅ New Value: {schema_change.new_value}")
+            if schema_change.change_type == "ALTER_TABLE" and not schema_change.column_name:
                 print(f"   ⚠️  Operation details not available (incomplete SQL from event trigger)")
             
             # Step 2: Find code files that use this table/column
@@ -248,6 +256,82 @@ class SchemaChangeOrchestrator:
         
         return code_dependencies
     
+    async def _enhance_schema_change_from_db(
+        self,
+        schema_change: SchemaChange,
+        database_name: str
+    ) -> SchemaChange:
+        """
+        Try to enhance schema change details by:
+        1. Parsing the SQL statement more carefully (regex)
+        2. Querying PostgreSQL to detect actual changes (compare before/after)
+        """
+        if not PSYCOPG2_AVAILABLE:
+            return schema_change
+        
+        try:
+            import re
+            sql_upper = schema_change.sql_statement.upper()
+            
+            # Method 1: Try regex parsing on the SQL string
+            # Try to detect ADD COLUMN from common patterns
+            if 'ADD' in sql_upper and 'COLUMN' in sql_upper:
+                col_match = re.search(r'ADD\s+(?:COLUMN\s+)?`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if col_match:
+                    schema_change.change_type = "ADD_COLUMN"
+                    schema_change.column_name = col_match.group(1).upper()
+                    # Try to get column type
+                    type_match = re.search(r'ADD\s+(?:COLUMN\s+)?`?\w+`?\s+(\w+(?:\([^)]+\))?)', sql_upper, re.IGNORECASE)
+                    if type_match:
+                        schema_change.new_value = type_match.group(1)
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect DROP COLUMN
+            if 'DROP' in sql_upper and 'COLUMN' in sql_upper:
+                col_match = re.search(r'DROP\s+(?:COLUMN\s+)?`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if col_match:
+                    schema_change.change_type = "DROP_COLUMN"
+                    schema_change.column_name = col_match.group(1).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect ALTER COLUMN / MODIFY COLUMN
+            if 'ALTER' in sql_upper and 'COLUMN' in sql_upper and 'TYPE' in sql_upper:
+                col_match = re.search(r'ALTER\s+COLUMN\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if col_match:
+                    schema_change.change_type = "MODIFY_COLUMN"
+                    schema_change.column_name = col_match.group(1).upper()
+                    # Try to get new type
+                    type_match = re.search(r'TYPE\s+(\w+(?:\([^)]+\))?)', sql_upper, re.IGNORECASE)
+                    if type_match:
+                        schema_change.new_value = type_match.group(1)
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect RENAME COLUMN
+            if 'RENAME' in sql_upper and 'COLUMN' in sql_upper and 'TO' in sql_upper:
+                rename_match = re.search(r'RENAME\s+COLUMN\s+`?(\w+)`?\s+TO\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if rename_match:
+                    schema_change.change_type = "RENAME_COLUMN"
+                    schema_change.column_name = rename_match.group(1).upper()
+                    schema_change.old_value = rename_match.group(1).upper()
+                    schema_change.new_value = rename_match.group(2).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Method 2: If regex fails, try querying PostgreSQL to detect what changed
+            # This is a best-effort approach - we compare current schema with what we know
+            # Note: This requires storing previous schema state (future enhancement)
+            print(f"   ⚠️  Could not detect exact change type from SQL, using generic ALTER_TABLE")
+            print(f"   💡 Tip: Use direct API call with full SQL for accurate detection")
+            
+        except Exception as e:
+            print(f"   ⚠️ Could not enhance schema change: {e}")
+            # Return original schema_change if enhancement fails
+        
+        return schema_change
+    
     async def _get_database_relationships(
         self,
         table_name: str,
@@ -333,13 +417,15 @@ class SchemaChangeOrchestrator:
                         })
                     
                     # Get views that depend on this table
+                    # Use pg_get_viewdef function to get view definition
                     cursor.execute("""
                     SELECT DISTINCT
                         v.viewname AS view_name,
-                        v.definition AS view_definition
+                        pg_get_viewdef(c.oid) AS view_definition
                     FROM pg_views v
+                    JOIN pg_class c ON c.relname = v.viewname
                     WHERE v.schemaname = 'public'
-                    AND v.viewdefinition LIKE %s
+                    AND pg_get_viewdef(c.oid) LIKE %s
                     """, (f'%{table_name.lower()}%',))
                     
                     for row in cursor.fetchall():
