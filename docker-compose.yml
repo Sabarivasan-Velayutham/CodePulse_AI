@@ -31,6 +31,11 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=codeflow123
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - POSTGRES_HOST=${POSTGRES_HOST:-host.docker.internal}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sabari}
+      - POSTGRES_DB=${POSTGRES_DB:-banking_db}
     volumes:
       - ./backend:/app
       - ./tools:/tools

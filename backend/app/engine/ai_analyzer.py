@@ -32,7 +32,8 @@ class AIAnalyzer:
         self,
         file_path: str,
         code_diff: str,
-        dependencies: Dict
+        dependencies: Dict,
+        database_dependencies: Dict = None
     ) -> Dict:
         """
         Main AI analysis function
@@ -49,7 +50,7 @@ class AIAnalyzer:
 
         # Build comprehensive prompt
         prompt = self._build_analysis_prompt(
-            file_path, code_diff, dependencies)
+            file_path, code_diff, dependencies, database_dependencies)
 
         try:
             import asyncio
@@ -112,7 +113,8 @@ class AIAnalyzer:
         self,
         file_path: str,
         code_diff: str,
-        dependencies: Dict
+        dependencies: Dict,
+        database_dependencies: Dict = None
     ) -> str:
         """Build comprehensive analysis prompt"""
 
@@ -138,6 +140,10 @@ Direct Dependencies ({len(direct_deps)}):
 
 Indirect Dependencies ({len(indirect_deps)}):
 {self._format_dependencies(indirect_deps[:5])}  # Top 5
+
+## DATABASE DEPENDENCIES
+{database_dependencies.get("tables", []) and f"Database Tables Used ({len(database_dependencies.get('tables', []))}):" or "Database Tables Used: None"}
+{self._format_database_dependencies(database_dependencies) if database_dependencies else "   None"}
 
 ## ANALYSIS REQUIRED
 
@@ -191,6 +197,21 @@ Provide specific, actionable insights focused on banking domain risks.
         for dep in deps:
             formatted.append(
                 f"   - {dep['source']} {dep['type']} {dep['target']}"
+            )
+        return "\n".join(formatted)
+    
+    def _format_database_dependencies(self, database_dependencies: Dict) -> str:
+        """Format database dependencies for prompt"""
+        if not database_dependencies or not database_dependencies.get("tables"):
+            return "   None"
+        
+        formatted = []
+        for table_info in database_dependencies.get("tables", [])[:10]:  # Top 10
+            table_name = table_info["table_name"]
+            usage_count = table_info["usage_count"]
+            columns = table_info.get("columns", [])
+            formatted.append(
+                f"   - {table_name} ({usage_count} usages, columns: {', '.join(columns[:5]) if columns else 'N/A'})"
             )
         return "\n".join(formatted)
 
@@ -296,4 +317,168 @@ Return as JSON array:
                 return []
         except:
             return []
+    
+    async def analyze_schema_impact(
+        self,
+        schema_change,
+        code_dependencies: List[Dict],
+        db_relationships: Dict
+    ) -> Dict:
+        """
+        Analyze impact of database schema change
+        
+        Args:
+            schema_change: SchemaChange object
+            code_dependencies: List of code files that use the table
+            db_relationships: Database relationships (foreign keys, etc.)
+        
+        Returns:
+            AI-generated insights for schema change
+        """
+        print(f"🤖 Running AI analysis for schema change: {schema_change.table_name}")
+        
+        prompt = self._build_schema_analysis_prompt(
+            schema_change, code_dependencies, db_relationships
+        )
+        
+        try:
+            import asyncio
+            
+            safety_settings = {
+                'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
+                'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
+                'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
+                'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
+            }
+            
+            config = {
+                'temperature': 0.2,
+                'top_p': 0.8,
+                'top_k': 40,
+                'max_output_tokens': 8192,
+            }
+            
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.model.generate_content,
+                        prompt,
+                        generation_config=config,
+                        safety_settings=safety_settings
+                    ),
+                    timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                print("⚠️ AI schema analysis timed out after 60 seconds")
+                return self._fallback_schema_analysis()
+            
+            if not response.parts or not response.parts[0].text:
+                return self._fallback_schema_analysis()
+            
+            response_text = response.parts[0].text
+            insights = self._parse_ai_response(response_text)
+            
+            print(f"✅ AI schema analysis complete")
+            return insights
+            
+        except Exception as e:
+            print(f"❌ AI schema analysis error: {e}")
+            return self._fallback_schema_analysis()
+    
+    def _build_schema_analysis_prompt(
+        self,
+        schema_change,
+        code_dependencies: List[Dict],
+        db_relationships: Dict
+    ) -> str:
+        """Build prompt for schema change analysis"""
+        
+        affected_files = [dep["file_path"] for dep in code_dependencies]
+        forward_tables = [rel.get("target_table") for rel in db_relationships.get("forward", [])]
+        reverse_tables = [rel.get("source_table") for rel in db_relationships.get("reverse", [])]
+        
+        prompt = f"""
+You are an expert database architect analyzing schema changes in a banking application.
+
+## SCHEMA CHANGE DETAILS
+
+Change Type: {schema_change.change_type}
+Table: {schema_change.table_name}
+Column: {schema_change.column_name or "N/A"}
+Old Value: {schema_change.old_value or "N/A"}
+New Value: {schema_change.new_value or "N/A"}
+SQL Statement: {schema_change.sql_statement}
+
+## IMPACT ANALYSIS
+
+Affected Code Files ({len(affected_files)}):
+{chr(10).join(f"   - {f}" for f in affected_files[:10])}
+
+Database Relationships:
+- Forward (tables this table references): {len(forward_tables)}
+- Reverse (tables that reference this): {len(reverse_tables)}
+
+## ANALYSIS REQUIRED
+
+Analyze this schema change and provide insights in JSON format:
+
+{{
+  "summary": "2-3 sentence summary of schema change impact",
+  "risks": [
+    "Risk 1: Specific concern about breaking changes",
+    "Risk 2: Data migration concerns",
+    "Risk 3: Application compatibility issues"
+  ],
+  "regulatory_concerns": "Any compliance/regulatory issues (data retention, audit trails, etc.)",
+  "recommendations": [
+    "Recommendation 1: Migration strategy",
+    "Recommendation 2: Testing approach",
+    "Recommendation 3: Deployment considerations"
+  ],
+  "deployment_advice": "When/how to deploy this schema change",
+  "data_migration_required": true/false,
+  "backward_compatibility": "Is this change backward compatible?"
+}}
+
+## BANKING CONTEXT
+
+Critical Considerations:
+- Data integrity: Schema changes can break financial calculations
+- Audit trails: Column changes may affect compliance reporting
+- Transaction processing: Changes during business hours are risky
+- Data migration: May require downtime
+- Foreign key constraints: Can cascade to related tables
+- Index changes: May affect query performance
+
+Common Schema Change Risks:
+- Breaking application code that expects old schema
+- Data loss during column drops
+- Performance degradation from index changes
+- Compliance violations from missing audit columns
+- Transaction failures from constraint violations
+
+Provide specific, actionable insights focused on database schema change risks in banking domain.
+"""
+        return prompt
+    
+    def _fallback_schema_analysis(self) -> Dict:
+        """Fallback analysis for schema changes"""
+        return {
+            "summary": "Schema change detected. Manual review recommended.",
+            "risks": [
+                "Database schema changes can break application code",
+                "Data migration may be required",
+                "Backward compatibility concerns"
+            ],
+            "regulatory_concerns": "Schema changes may affect compliance reporting",
+            "recommendations": [
+                "Review all code that accesses this table",
+                "Plan data migration strategy",
+                "Test thoroughly in staging environment",
+                "Consider backward compatibility"
+            ],
+            "deployment_advice": "Deploy during maintenance window",
+            "data_migration_required": True,
+            "backward_compatibility": "Unknown - requires manual review"
+        }
 

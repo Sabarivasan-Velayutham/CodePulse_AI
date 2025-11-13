@@ -33,9 +33,19 @@ function AnalysisCard({ analysis }) {
     if (newExpanded && !graphData) {
       setLoadingGraph(true);
       try {
-        const fileName = analysis.file_path.split("/").pop();
-        const data = await apiService.getDependencyGraph(fileName);
-        setGraphData(data);
+        if (analysis.type === "schema_change") {
+          // For schema changes, get table dependency graph
+          const tableName = analysis.schema_change?.table_name;
+          if (tableName) {
+            const data = await apiService.getTableDependencyGraph(tableName);
+            setGraphData(data);
+          }
+        } else if (analysis.file_path) {
+          // For code changes, get file dependency graph
+          const fileName = analysis.file_path.split("/").pop();
+          const data = await apiService.getDependencyGraph(fileName);
+          setGraphData(data);
+        }
       } catch (error) {
         console.error("Error loading graph:", error);
       } finally {
@@ -68,7 +78,9 @@ function AnalysisCard({ analysis }) {
             <div className="file-path">
               <CodeIcon fontSize="small" />
               <Typography variant="h6" component="span">
-                {analysis.file_path.split("/").pop()}
+                {analysis.type === "schema_change" 
+                  ? `🗄️ ${analysis.schema_change?.table_name || "Schema Change"}`
+                  : analysis.file_path?.split("/").pop() || "Unknown File"}
               </Typography>
             </div>
             <div className="timestamp">
@@ -113,38 +125,77 @@ function AnalysisCard({ analysis }) {
 
         {/* Quick Stats */}
         <Box className="quick-stats" mt={2}>
-          <div className="stat-item">
-            <Typography variant="caption" color="textSecondary">
-              Direct Dependencies
-            </Typography>
-            <Typography variant="h6">
-              {analysis.dependencies.count.direct || 0}
-            </Typography>
-          </div>
-          <div className="stat-item">
-            <Typography variant="caption" color="textSecondary">
-              Indirect Dependencies
-            </Typography>
-            <Typography variant="h6">
-              {analysis.dependencies.count.indirect || 0}
-            </Typography>
-          </div>
-          <div className="stat-item">
-            <Typography variant="caption" color="textSecondary">
-              Reverse Dependencies
-            </Typography>
-            <Typography variant="h6">
-              {(analysis.dependencies.count.reverse_direct || 0) + (analysis.dependencies.count.reverse_indirect || 0)}
-            </Typography>
-          </div>
-          <div className="stat-item">
-            <Typography variant="caption" color="textSecondary">
-              Affected Modules
-            </Typography>
-            <Typography variant="h6">
-              {analysis.affected_modules.length}
-            </Typography>
-          </div>
+          {analysis.type === "schema_change" ? (
+            <>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Affected Code Files
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.summary?.code_files_affected || analysis.code_dependencies?.length || 0}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Related Tables
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.summary?.tables_affected || analysis.affected_tables?.length || 0}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Total Usages
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.summary?.total_usages || 0}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Change Type
+                </Typography>
+                <Typography variant="h6" style={{ fontSize: "0.9rem" }}>
+                  {analysis.schema_change?.change_type || "UNKNOWN"}
+                </Typography>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Direct Dependencies
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.dependencies?.count?.direct || 0}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Indirect Dependencies
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.dependencies?.count?.indirect || 0}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Reverse Dependencies
+                </Typography>
+                <Typography variant="h6">
+                  {(analysis.dependencies?.count?.reverse_direct || 0) + (analysis.dependencies?.count?.reverse_indirect || 0)}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Affected Modules
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.affected_modules?.length || 0}
+                </Typography>
+              </div>
+            </>
+          )}
         </Box>
 
         {/* AI Summary */}
@@ -218,33 +269,106 @@ function AnalysisCard({ analysis }) {
               </Box>
             )}
 
-          {/* Affected Modules */}
-          <Box>
-            <Typography variant="h6" gutterBottom>
-              📦 Affected Modules ({analysis.affected_modules.length})
-            </Typography>
-            <div className="module-chips">
-              {analysis.affected_modules.slice(0, 10).map((module, index) => (
-                <Chip
-                  key={index}
-                  label={module}
-                  size="small"
-                  variant="outlined"
-                  style={{ margin: "0.25rem" }}
-                />
-              ))}
-              {analysis.affected_modules.length > 10 && (
-                <Chip
-                  label={`+${analysis.affected_modules.length - 10} more`}
-                  size="small"
-                  variant="outlined"
-                  style={{ margin: "0.25rem" }}
-                />
-              )}
-            </div>
-          </Box>
+          {/* Schema Change Details */}
+          {analysis.type === "schema_change" && (
+            <>
+              <Box mb={2}>
+                <Typography variant="h6" gutterBottom>
+                  🗄️ Schema Change Details
+                </Typography>
+                <Typography variant="body2">
+                  <strong>Table:</strong> {analysis.schema_change?.table_name}
+                </Typography>
+                {analysis.schema_change?.column_name && (
+                  <Typography variant="body2">
+                    <strong>Column:</strong> {analysis.schema_change.column_name}
+                  </Typography>
+                )}
+                <Typography variant="body2">
+                  <strong>Change Type:</strong> {analysis.schema_change?.change_type}
+                </Typography>
+                {analysis.schema_change?.sql_statement && (
+                  <Typography variant="body2" style={{ fontFamily: "monospace", fontSize: "0.85rem", marginTop: "0.5rem" }}>
+                    <strong>SQL:</strong> {analysis.schema_change.sql_statement}
+                  </Typography>
+                )}
+              </Box>
 
-          {/* Dependency Graph */}
+              {/* Affected Code Files */}
+              {analysis.code_dependencies && analysis.code_dependencies.length > 0 && (
+                <Box mb={2}>
+                  <Typography variant="h6" gutterBottom>
+                    📝 Affected Code Files ({analysis.code_dependencies.length})
+                  </Typography>
+                  <ul className="risk-list">
+                    {analysis.code_dependencies.map((dep, index) => (
+                      <li key={index}>
+                        <Typography variant="body2">
+                          {dep.file_path} ({dep.usage_count} usages)
+                        </Typography>
+                      </li>
+                    ))}
+                  </ul>
+                </Box>
+              )}
+
+              {/* Related Tables */}
+              {analysis.affected_tables && analysis.affected_tables.length > 0 && (
+                <Box mb={2}>
+                  <Typography variant="h6" gutterBottom>
+                    🔗 Related Tables ({analysis.affected_tables.length})
+                  </Typography>
+                  <div className="module-chips">
+                    {analysis.affected_tables.map((table, index) => (
+                      <Chip
+                        key={index}
+                        label={table}
+                        size="small"
+                        variant="outlined"
+                        style={{ margin: "0.25rem" }}
+                      />
+                    ))}
+                  </div>
+                </Box>
+              )}
+            </>
+          )}
+
+          {/* Affected Modules (for code changes) */}
+          {analysis.type !== "schema_change" && (
+            <Box>
+              <Typography variant="h6" gutterBottom>
+                📦 Affected Modules ({analysis.affected_modules?.length || 0})
+              </Typography>
+              {analysis.affected_modules && analysis.affected_modules.length > 0 ? (
+                <div className="module-chips">
+                  {analysis.affected_modules.slice(0, 10).map((module, index) => (
+                    <Chip
+                      key={index}
+                      label={module}
+                      size="small"
+                      variant="outlined"
+                      style={{ margin: "0.25rem" }}
+                    />
+                  ))}
+                  {analysis.affected_modules.length > 10 && (
+                    <Chip
+                      label={`+${analysis.affected_modules.length - 10} more`}
+                      size="small"
+                      variant="outlined"
+                      style={{ margin: "0.25rem" }}
+                    />
+                  )}
+                </div>
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No affected modules
+                </Typography>
+              )}
+            </Box>
+          )}
+
+          {/* Dependency Graph (for both code and schema changes) */}
           <Box mt={3}>
             {loadingGraph ? (
               <Box textAlign="center" p={2}>
@@ -255,7 +379,9 @@ function AnalysisCard({ analysis }) {
               </Box>
             ) : graphData ? (
               <DependencyGraph
-                fileName={analysis.file_path.split("/").pop()}
+                fileName={analysis.type === "schema_change" 
+                  ? analysis.schema_change?.table_name || "Table"
+                  : analysis.file_path?.split("/").pop() || "File"}
                 dependencies={graphData}
               />
             ) : (

@@ -55,13 +55,24 @@ export const apiService = {
     }
   },
   
-  // Get dependency graph
+  // Get dependency graph for code files
   getDependencyGraph: async (fileName) => {
     try {
       const response = await api.get(`/api/v1/graph/${fileName}`);
       return response.data;
     } catch (error) {
       console.error('Get dependency graph failed:', error);
+      return { nodes: [], links: [] }; // Return empty graph
+    }
+  },
+  
+  // Get dependency graph for database tables (schema changes)
+  getTableDependencyGraph: async (tableName) => {
+    try {
+      const response = await api.get(`/api/v1/schema/graph/${tableName}`);
+      return response.data;
+    } catch (error) {
+      console.error('Get table dependency graph failed:', error);
       return { nodes: [], links: [] }; // Return empty graph
     }
   },

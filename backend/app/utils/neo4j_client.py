@@ -1,6 +1,6 @@
 from neo4j import AsyncGraphDatabase
 import os
-from typing import Optional
+from typing import Optional, Dict, List
 
 class Neo4jClient:
     """Neo4j database client"""
@@ -198,6 +198,159 @@ class Neo4jClient:
             except Exception as e:
                 print(f"❌ Neo4j query error: {e}")
                 raise
+            
+            return dependencies
+    
+    async def create_database_node(self, name: str, properties: dict = None):
+        """Create a database node"""
+        async with self.driver.session() as session:
+            query = """
+            MERGE (d:Database {name: $name})
+            SET d += $properties
+            RETURN d
+            """
+            result = await session.run(
+                query,
+                name=name,
+                properties=properties or {}
+            )
+            return await result.single()
+    
+    async def create_table_node(self, name: str, database: str, properties: dict = None):
+        """Create a table node and link to database"""
+        async with self.driver.session() as session:
+            query = """
+            MATCH (db:Database {name: $database})
+            MERGE (t:Table {name: $name, database: $database})
+            SET t += $properties
+            MERGE (t)-[:BELONGS_TO]->(db)
+            RETURN t
+            """
+            result = await session.run(
+                query,
+                name=name,
+                database=database,
+                properties=properties or {}
+            )
+            return await result.single()
+    
+    async def create_table_usage(self, source_file: str, target_table: str, database: str, usage_count: int = 1, column_name: str = ""):
+        """Create relationship: Code file USES Table"""
+        async with self.driver.session() as session:
+            query = """
+            MATCH (m:Module {name: $source_file})
+            MATCH (t:Table {name: $target_table, database: $database})
+            MERGE (m)-[r:USES_TABLE]->(t)
+            SET r.usage_count = $usage_count,
+                r.column_name = $column_name,
+                r.last_updated = datetime()
+            RETURN r
+            """
+            result = await session.run(
+                query,
+                source_file=source_file,
+                target_table=target_table,
+                database=database,
+                usage_count=usage_count,
+                column_name=column_name
+            )
+            return await result.single()
+    
+    async def create_table_relationship(self, source_table: str, target_table: str, database: str, relationship_type: str, properties: dict = None):
+        """Create relationship between tables (foreign key, etc.)"""
+        async with self.driver.session() as session:
+            query = f"""
+            MATCH (s:Table {{name: $source_table, database: $database}})
+            MATCH (t:Table {{name: $target_table, database: $database}})
+            MERGE (s)-[r:{relationship_type}]->(t)
+            SET r += $properties,
+                r.last_updated = datetime()
+            RETURN r
+            """
+            result = await session.run(
+                query,
+                source_table=source_table,
+                target_table=target_table,
+                database=database,
+                properties=properties or {}
+            )
+            return await result.single()
+    
+    async def get_table_relationships(self, table_name: str, database_name: str) -> Dict:
+        """Get all relationships for a table"""
+        if not self.driver:
+            return {"forward": [], "reverse": []}
+        
+        async with self.driver.session() as session:
+            # Forward: tables this table references
+            forward_query = """
+            MATCH (t:Table {name: $table_name, database: $database_name})-[r]->(target:Table {database: $database_name})
+            RETURN 
+                type(r) as relationship_type,
+                target.name as target_table,
+                properties(r) as properties
+            """
+            
+            # Reverse: tables that reference this table
+            reverse_query = """
+            MATCH (source:Table {database: $database_name})-[r]->(t:Table {name: $table_name, database: $database_name})
+            RETURN 
+                type(r) as relationship_type,
+                source.name as source_table,
+                properties(r) as properties
+            """
+            
+            forward = []
+            reverse = []
+            
+            try:
+                result = await session.run(forward_query, table_name=table_name, database_name=database_name)
+                async for record in result:
+                    forward.append({
+                        "type": record.get("relationship_type", "RELATES_TO"),
+                        "target_table": record.get("target_table"),
+                        **record.get("properties", {})
+                    })
+                
+                result = await session.run(reverse_query, table_name=table_name, database_name=database_name)
+                async for record in result:
+                    reverse.append({
+                        "type": record.get("relationship_type", "RELATES_TO"),
+                        "source_table": record.get("source_table"),
+                        **record.get("properties", {})
+                    })
+            except Exception as e:
+                print(f"⚠️ Error getting table relationships: {e}")
+            
+            return {"forward": forward, "reverse": reverse}
+    
+    async def get_table_code_dependencies(self, table_name: str, database_name: str) -> List[Dict]:
+        """Get all code files that use a table"""
+        if not self.driver:
+            return []
+        
+        async with self.driver.session() as session:
+            query = """
+            MATCH (m:Module)-[r:USES_TABLE]->(t:Table {name: $table_name, database: $database_name})
+            RETURN 
+                m.name as file_name,
+                m.path as file_path,
+                r.usage_count as usage_count,
+                r.column_name as column_name
+            """
+            
+            dependencies = []
+            try:
+                result = await session.run(query, table_name=table_name, database_name=database_name)
+                async for record in result:
+                    dependencies.append({
+                        "file_name": record.get("file_name"),
+                        "file_path": record.get("file_path", ""),
+                        "usage_count": record.get("usage_count", 1),
+                        "column_name": record.get("column_name", "")
+                    })
+            except Exception as e:
+                print(f"⚠️ Error getting table code dependencies: {e}")
             
             return dependencies
 

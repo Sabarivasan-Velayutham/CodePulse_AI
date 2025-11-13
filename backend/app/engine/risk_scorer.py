@@ -26,7 +26,8 @@ class RiskScorer:
         file_path: str,
         dependencies: Dict,
         ai_insights: Dict,
-        metrics: Dict = None
+        metrics: Dict = None,
+        database_dependencies: Dict = None
     ) -> Dict:
         """
         Calculate comprehensive risk score
@@ -46,7 +47,7 @@ class RiskScorer:
         technical_score = self._calculate_technical_risk(dependencies, metrics)
 
         # 2. DOMAIN RISK (0-3 points)
-        domain_score = self._calculate_domain_risk(file_path, dependencies)
+        domain_score = self._calculate_domain_risk(file_path, dependencies, database_dependencies)
 
         # 3. AI-BASED RISK (0-2 points)
         ai_score = self._calculate_ai_risk(ai_insights)
@@ -123,7 +124,7 @@ class RiskScorer:
 
         return min(score, 4.0)
 
-    def _calculate_domain_risk(self, file_path: str, dependencies: Dict) -> float:
+    def _calculate_domain_risk(self, file_path: str, dependencies: Dict, database_dependencies: Dict = None) -> float:
         """Calculate banking domain-specific risk (0-3 points)"""
         score = 0.0
 
@@ -144,13 +145,23 @@ class RiskScorer:
         elif critical_count >= 1:
             score += 1.0
 
-        # Check for database dependencies
+        # Check for database dependencies (enhanced)
         has_db_dependency = False
         for dep in dependencies.get("direct_dependencies", []):
             if "DAO" in dep.get("target", "") or "Table" in dep.get("target", ""):
                 has_db_dependency = True
                 score += 0.5
                 break
+        
+        # Additional risk if code directly uses database tables
+        if database_dependencies and database_dependencies.get("tables"):
+            table_count = len(database_dependencies.get("tables", []))
+            if table_count > 5:
+                score += 1.0  # High risk - many tables affected
+            elif table_count > 2:
+                score += 0.5  # Medium risk
+            else:
+                score += 0.3  # Low risk
 
         return min(score, 3.0)
 
@@ -243,3 +254,112 @@ class RiskScorer:
             return ("MEDIUM", "#ffc107")  # Yellow
         else:
             return ("LOW", "#28a745")  # Green
+    
+    def calculate_schema_risk(
+        self,
+        schema_change,
+        code_dependencies: List[Dict],
+        db_relationships: Dict,
+        ai_insights: Dict
+    ) -> Dict:
+        """
+        Calculate risk score for database schema changes
+        
+        Args:
+            schema_change: SchemaChange object
+            code_dependencies: List of code files using the table
+            db_relationships: Database relationships
+            ai_insights: AI analysis insights
+        
+        Returns:
+            Risk score object
+        """
+        print(f"📊 Calculating schema change risk for {schema_change.table_name}...")
+        
+        # Initialize scores
+        change_type_score = 0.0
+        code_impact_score = 0.0
+        db_relationship_score = 0.0
+        ai_score = 0.0
+        
+        # 1. CHANGE TYPE RISK (0-3 points)
+        change_type = schema_change.change_type
+        if change_type == "DROP_COLUMN" or change_type == "DROP_TABLE":
+            change_type_score = 3.0  # Highest risk
+        elif change_type == "MODIFY_COLUMN" or change_type == "RENAME_COLUMN":
+            change_type_score = 2.5
+        elif change_type == "ADD_COLUMN":
+            change_type_score = 1.0  # Lower risk, but still needs attention
+        elif change_type == "ALTER_TABLE":
+            # Generic ALTER TABLE - unknown operation, use medium risk
+            change_type_score = 2.0  # Medium risk (unknown operation)
+        
+        # 2. CODE IMPACT RISK (0-3 points)
+        affected_files = len(code_dependencies)
+        total_usages = sum(dep.get("usage_count", 1) for dep in code_dependencies)
+        
+        if affected_files > 10:
+            code_impact_score = 3.0
+        elif affected_files > 5:
+            code_impact_score = 2.0
+        elif affected_files > 2:
+            code_impact_score = 1.5
+        elif affected_files > 0:
+            code_impact_score = 1.0
+        
+        # Additional risk if column-specific change affects many usages
+        if schema_change.column_name and total_usages > 20:
+            code_impact_score += 0.5
+        
+        code_impact_score = min(code_impact_score, 3.0)
+        
+        # 3. DATABASE RELATIONSHIP RISK (0-2 points)
+        forward_count = len(db_relationships.get("forward", []))
+        reverse_count = len(db_relationships.get("reverse", []))
+        
+        if reverse_count > 5:  # Many tables depend on this
+            db_relationship_score = 2.0
+        elif reverse_count > 2:
+            db_relationship_score = 1.5
+        elif reverse_count > 0:
+            db_relationship_score = 1.0
+        
+        if forward_count > 3:  # This table depends on many others
+            db_relationship_score += 0.5
+        
+        db_relationship_score = min(db_relationship_score, 2.0)
+        
+        # 4. AI-BASED RISK (0-2 points)
+        ai_score = self._calculate_ai_risk(ai_insights)
+        
+        # Calculate base score
+        base_score = change_type_score + code_impact_score + db_relationship_score + ai_score
+        
+        # Normalize to 0-10 scale
+        final_score = min(base_score * 1.25, 10.0)  # Scale up to 10
+        
+        # Determine risk level
+        risk_level, color = self._determine_risk_level(final_score)
+        
+        result = {
+            "score": round(final_score, 1),
+            "level": risk_level,
+            "color": color,
+            "breakdown": {
+                "change_type": round(change_type_score, 1),
+                "code_impact": round(code_impact_score, 1),
+                "database_relationships": round(db_relationship_score, 1),
+                "ai_analysis": round(ai_score, 1)
+            },
+            "factors": {
+                "affected_code_files": affected_files,
+                "total_usages": total_usages,
+                "forward_relationships": forward_count,
+                "reverse_relationships": reverse_count,
+                "change_type": change_type
+            }
+        }
+        
+        print(f"✅ Schema Risk Score: {final_score}/10 - {risk_level}")
+        
+        return result

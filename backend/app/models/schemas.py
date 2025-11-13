@@ -91,3 +91,21 @@ class AnalysisRequest(BaseModel):
     diff: Optional[str] = Field(None, description="Code diff (optional)")
     commit_sha: Optional[str] = Field(None, description="Commit SHA")
     commit_message: Optional[str] = Field(None, description="Commit message")
+
+
+class SchemaChangeRequest(BaseModel):
+    """Database schema change analysis request"""
+    sql_statement: str = Field(..., description="SQL DDL statement (ALTER TABLE, etc.)")
+    database_name: str = Field(..., description="Name of the database")
+    change_id: Optional[str] = Field(None, description="Optional change identifier")
+    repository: Optional[str] = Field(None, description="Repository name")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "sql_statement": "ALTER TABLE transactions ADD COLUMN currency VARCHAR(3) DEFAULT 'USD'",
+                "database_name": "banking_db",
+                "change_id": "migration_001",
+                "repository": "banking-app"
+            }
+        }

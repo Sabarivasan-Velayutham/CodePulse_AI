@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 import time
 from fastapi.middleware.cors import CORSMiddleware
 from app.utils.neo4j_client import neo4j_client
-from app.api import webhooks, analysis
+from app.api import webhooks, analysis, schema
 import uvicorn
 from contextlib import asynccontextmanager
 from app.utils.logger import request_logger
@@ -121,6 +121,7 @@ async def get_request_stats():
 # Include API routers
 app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
+app.include_router(schema.router, prefix="/api/v1", tags=["schema"])
 
 
 if __name__ == "__main__":
