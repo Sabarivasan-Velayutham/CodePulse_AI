@@ -274,18 +274,35 @@ class SchemaChangeOrchestrator:
             sql_upper = schema_change.sql_statement.upper()
             
             # Method 1: Try regex parsing on the SQL string
-            # Try to detect ADD COLUMN from common patterns
+            # Try to detect ADD COLUMN from common patterns (handle incomplete SQL)
+            # Pattern: ALTER TABLE ... ADD [COLUMN] column_name [TYPE]
             if 'ADD' in sql_upper and 'COLUMN' in sql_upper:
-                col_match = re.search(r'ADD\s+(?:COLUMN\s+)?`?(\w+)`?', sql_upper, re.IGNORECASE)
+                # More flexible pattern that handles incomplete SQL
+                # Match: ADD COLUMN column_name or ADD column_name
+                col_match = re.search(r'ADD\s+(?:COLUMN\s+)?(?:`?(\w+)`?|(\w+))', sql_upper, re.IGNORECASE)
                 if col_match:
-                    schema_change.change_type = "ADD_COLUMN"
-                    schema_change.column_name = col_match.group(1).upper()
-                    # Try to get column type
-                    type_match = re.search(r'ADD\s+(?:COLUMN\s+)?`?\w+`?\s+(\w+(?:\([^)]+\))?)', sql_upper, re.IGNORECASE)
-                    if type_match:
-                        schema_change.new_value = type_match.group(1)
-                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
-                    return schema_change
+                    column_name = col_match.group(1) or col_match.group(2)
+                    if column_name:
+                        schema_change.change_type = "ADD_COLUMN"
+                        schema_change.column_name = column_name.upper()
+                        # Try to get column type (may not be present in incomplete SQL)
+                        type_match = re.search(r'ADD\s+(?:COLUMN\s+)?`?\w+`?\s+(\w+(?:\([^)]+\))?)', sql_upper, re.IGNORECASE)
+                        if type_match:
+                            schema_change.new_value = type_match.group(1)
+                        print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                        return schema_change
+            
+            # Also try without COLUMN keyword (some databases allow ADD column_name directly)
+            if 'ADD' in sql_upper and 'COLUMN' not in sql_upper:
+                # Check if it's likely an ADD COLUMN (not ADD CONSTRAINT)
+                if 'CONSTRAINT' not in sql_upper:
+                    col_match = re.search(r'ADD\s+`?(\w+)`?\s+(\w+(?:\([^)]+\))?)', sql_upper, re.IGNORECASE)
+                    if col_match:
+                        schema_change.change_type = "ADD_COLUMN"
+                        schema_change.column_name = col_match.group(1).upper()
+                        schema_change.new_value = col_match.group(2)
+                        print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                        return schema_change
             
             # Try to detect DROP COLUMN
             if 'DROP' in sql_upper and 'COLUMN' in sql_upper:
@@ -431,8 +448,10 @@ class SchemaChangeOrchestrator:
                     for row in cursor.fetchall():
                         relationships["reverse"].append({
                             "type": "VIEW",
-                            "source_table": row["view_name"].upper(),
-                            "description": "View depends on this table"
+                            "source_table": row["view_name"].upper(),  # View name
+                            "target_table": table_name.upper(),  # Table the view depends on
+                            "description": "View depends on this table",
+                            "view_definition": row["view_definition"][:200] if row["view_definition"] else ""  # Truncated for display
                         })
                     
                     # Get triggers on this table

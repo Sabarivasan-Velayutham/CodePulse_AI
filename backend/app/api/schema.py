@@ -259,25 +259,49 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                 })
         
         for rel in db_rels.get("reverse", []):
+            rel_type = rel.get("type", "REFERENCED_BY")
             source_table = rel.get("source_table")
+            
             if source_table:
-                source_id = f"table:{source_table}"
-                if source_id not in nodes_map:
-                    source_node = {
-                        "id": source_id,
-                        "name": source_table,
-                        "type": "table",
-                        "risk": "low"
-                    }
-                    nodes.append(source_node)
-                    nodes_map[source_id] = source_node
-                
-                links.append({
-                    "source": source_id,
-                    "target": f"table:{table_name}",
-                    "type": rel.get("type", "REFERENCED_BY"),
-                    "direction": "reverse"
-                })
+                # Handle VIEW relationships specially
+                if rel_type == "VIEW":
+                    view_id = f"view:{source_table}"
+                    if view_id not in nodes_map:
+                        view_node = {
+                            "id": view_id,
+                            "name": source_table,
+                            "type": "view",
+                            "risk": "medium"
+                        }
+                        nodes.append(view_node)
+                        nodes_map[view_id] = view_node
+                    
+                    links.append({
+                        "source": view_id,
+                        "target": f"table:{table_name}",
+                        "type": "VIEW_DEPENDS_ON",
+                        "direction": "reverse",
+                        "description": rel.get("description", "View depends on this table")
+                    })
+                else:
+                    # Regular table relationships
+                    source_id = f"table:{source_table}"
+                    if source_id not in nodes_map:
+                        source_node = {
+                            "id": source_id,
+                            "name": source_table,
+                            "type": "table",
+                            "risk": "low"
+                        }
+                        nodes.append(source_node)
+                        nodes_map[source_id] = source_node
+                    
+                    links.append({
+                        "source": source_id,
+                        "target": f"table:{table_name}",
+                        "type": rel_type,
+                        "direction": "reverse"
+                    })
         
         return {
             "nodes": nodes,

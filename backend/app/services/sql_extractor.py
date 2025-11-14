@@ -65,6 +65,21 @@ class SQLExtractor:
                 "full_query": ""
             })
         
+        # Also check for heuristic class-to-table mappings
+        # e.g., AccountBalance -> accounts, TransactionDAO -> transactions
+        heuristic_tables = self._extract_heuristic_tables(file_content, file_path)
+        for table, line_num in heuristic_tables:
+            if table not in table_usage:
+                table_usage[table] = []
+            
+            table_usage[table].append({
+                "line_number": line_num,
+                "query_type": "HEURISTIC",
+                "columns": [],
+                "context": "Class/DAO name suggests table usage",
+                "full_query": ""
+            })
+        
         return table_usage
     
     def _extract_sql_queries(self, content: str) -> List[Tuple[str, int, str]]:
@@ -270,6 +285,60 @@ class SQLExtractor:
             # Check Python SQLAlchemy
             for match in re.finditer(sqlalchemy_pattern, line):
                 tables.append((match.group(1), line_num))
+        
+        return tables
+    
+    def _extract_heuristic_tables(self, content: str, file_path: str) -> List[Tuple[str, int]]:
+        """Extract table names using heuristics (class names, DAO names, etc.)"""
+        tables = []
+        lines = content.split('\n')
+        
+        # Common class-to-table mappings
+        # AccountBalance, AccountDAO, AccountService -> accounts
+        # TransactionDAO, TransactionService -> transactions
+        # CustomerDAO, CustomerService -> customers
+        # FraudAlert, FraudDetection -> fraud_alerts
+        
+        # Pattern: class AccountBalance, AccountDAO, etc.
+        # Match: class AccountBalance, class TransactionDAO, etc.
+        class_pattern = r'class\s+(\w+)(?:DAO|Service|Manager|Balance|Alert|Detection|Processor)?'
+        
+        # Common mappings
+        name_mappings = {
+            'account': 'accounts',
+            'transaction': 'transactions',
+            'customer': 'customers',
+            'fraud': 'fraud_alerts',
+            'fraudalert': 'fraud_alerts',
+            'transfer': 'transfer_records',
+            'balance': 'account_balances'
+        }
+        
+        for line_num, line in enumerate(lines, 1):
+            # Check for class names that suggest table usage
+            # Match: class AccountBalance, class TransactionDAO, etc.
+            class_match = re.search(r'class\s+(\w+)', line, re.IGNORECASE)
+            if class_match:
+                class_name = class_match.group(1).lower()
+                
+                # Check if class name contains table-related keywords
+                for keyword, table_name in name_mappings.items():
+                    if keyword in class_name:
+                        tables.append((table_name, line_num))
+                        break
+        
+        # Also check for variable/field names that suggest table usage
+        # e.g., accountBalance, transactionDAO, customerService
+        # Pattern: private AccountBalance, AccountBalance accountBalance, etc.
+        var_pattern = r'(?:private|public|protected|final)?\s+(\w*(?:Account|Transaction|Customer|Fraud|Transfer|Balance)\w*)'
+        for line_num, line in enumerate(lines, 1):
+            var_matches = re.finditer(var_pattern, line, re.IGNORECASE)
+            for match in var_matches:
+                var_name = match.group(1).lower() if match.group(1) else ""
+                for keyword, table_name in name_mappings.items():
+                    if keyword in var_name:
+                        tables.append((table_name, line_num))
+                        break
         
         return tables
 
