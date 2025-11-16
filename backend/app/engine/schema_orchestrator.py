@@ -264,7 +264,7 @@ class SchemaChangeOrchestrator:
         """
         Try to enhance schema change details by:
         1. Parsing the SQL statement more carefully (regex)
-        2. Querying PostgreSQL to detect actual changes (compare before/after)
+        2. Querying PostgreSQL system catalogs to detect what actually changed
         """
         if not PSYCOPG2_AVAILABLE:
             return schema_change
@@ -304,14 +304,29 @@ class SchemaChangeOrchestrator:
                         print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
                         return schema_change
             
-            # Try to detect DROP COLUMN
+            # Try to detect DROP COLUMN (check this BEFORE ADD to avoid false positives)
+            # Pattern: DROP COLUMN column_name or DROP column_name
             if 'DROP' in sql_upper and 'COLUMN' in sql_upper:
-                col_match = re.search(r'DROP\s+(?:COLUMN\s+)?`?(\w+)`?', sql_upper, re.IGNORECASE)
+                # More flexible pattern for incomplete SQL
+                col_match = re.search(r'DROP\s+(?:COLUMN\s+)?(?:`?(\w+)`?|(\w+))', sql_upper, re.IGNORECASE)
                 if col_match:
-                    schema_change.change_type = "DROP_COLUMN"
-                    schema_change.column_name = col_match.group(1).upper()
-                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
-                    return schema_change
+                    column_name = col_match.group(1) or col_match.group(2)
+                    if column_name:
+                        schema_change.change_type = "DROP_COLUMN"
+                        schema_change.column_name = column_name.upper()
+                        print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                        return schema_change
+            
+            # Also try DROP without COLUMN keyword
+            if 'DROP' in sql_upper and 'COLUMN' not in sql_upper:
+                # Check if it's likely DROP COLUMN (not DROP TABLE or DROP CONSTRAINT)
+                if 'TABLE' not in sql_upper and 'CONSTRAINT' not in sql_upper:
+                    col_match = re.search(r'DROP\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                    if col_match:
+                        schema_change.change_type = "DROP_COLUMN"
+                        schema_change.column_name = col_match.group(1).upper()
+                        print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                        return schema_change
             
             # Try to detect ALTER COLUMN / MODIFY COLUMN
             if 'ALTER' in sql_upper and 'COLUMN' in sql_upper and 'TYPE' in sql_upper:
@@ -337,9 +352,84 @@ class SchemaChangeOrchestrator:
                     print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
                     return schema_change
             
-            # Method 2: If regex fails, try querying PostgreSQL to detect what changed
-            # This is a best-effort approach - we compare current schema with what we know
-            # Note: This requires storing previous schema state (future enhancement)
+            # Method 2: Query PostgreSQL system catalogs to detect what changed
+            # IMPORTANT: Only use this for ADD operations. For DROP, we can't detect from current state.
+            # Check if SQL suggests ADD operation (no DROP keyword found)
+            if 'DROP' not in sql_upper:
+                print(f"   🔍 Querying PostgreSQL system catalogs to detect change...")
+                try:
+                    db_name = os.getenv("POSTGRES_DB", database_name)
+                    db_host = os.getenv("POSTGRES_HOST", "host.docker.internal")
+                    db_port = os.getenv("POSTGRES_PORT", "5432")
+                    db_user = os.getenv("POSTGRES_USER", "postgres")
+                    db_password = os.getenv("POSTGRES_PASSWORD", "sabari")
+                    
+                    conn = psycopg2.connect(
+                        host=db_host,
+                        port=db_port,
+                        database=db_name,
+                        user=db_user,
+                        password=db_password,
+                        connect_timeout=5
+                    )
+                    
+                    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                        table_name = schema_change.table_name.lower()
+                        
+                        # Get all columns for this table, ordered by creation time (attnum)
+                        # New columns typically have higher attnum values
+                        cursor.execute("""
+                            SELECT 
+                                a.attname AS column_name,
+                                pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+                                a.attnum,
+                                a.atthasdef,
+                                pg_get_expr(adbin, adrelid) AS default_value
+                            FROM pg_attribute a
+                            LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+                            JOIN pg_class c ON a.attrelid = c.oid
+                            JOIN pg_namespace n ON c.relnamespace = n.oid
+                            WHERE n.nspname = 'public'
+                            AND c.relname = %s
+                            AND a.attnum > 0
+                            AND NOT a.attisdropped
+                            ORDER BY a.attnum DESC
+                            LIMIT 5
+                        """, (table_name,))
+                        
+                        recent_columns = cursor.fetchall()
+                        
+                        if recent_columns:
+                            # The most recently added column (highest attnum) is likely what changed
+                            # Only use this heuristic for ADD operations (when DROP is not in SQL)
+                            newest_col = recent_columns[0]
+                            col_name = newest_col['column_name']
+                            col_type = newest_col['data_type']
+                            has_default = newest_col['atthasdef']
+                            default_value = newest_col['default_value']
+                            
+                            # Heuristic: If we can't detect from SQL and no DROP keyword,
+                            # assume the newest column was added
+                            print(f"   💡 Detected potential new column: {col_name} ({col_type})")
+                            schema_change.change_type = "ADD_COLUMN"
+                            schema_change.column_name = col_name.upper()
+                            schema_change.new_value = col_type
+                            if default_value:
+                                schema_change.new_value += f" DEFAULT {default_value}"
+                            print(f"   ✅ Enhanced: Detected {schema_change.change_type} via system catalog")
+                            conn.close()
+                            return schema_change
+                        
+                    conn.close()
+                except Exception as db_error:
+                    print(f"   ⚠️ Could not query system catalogs: {db_error}")
+            else:
+                # SQL contains DROP but we couldn't parse the column name
+                # This means the SQL is incomplete and we can't detect what was dropped
+                print(f"   ⚠️  DROP operation detected but column name not found in incomplete SQL")
+                print(f"   💡 Tip: Use direct API call with full SQL for accurate DROP detection")
+            
+            # If all methods fail, use generic ALTER_TABLE
             print(f"   ⚠️  Could not detect exact change type from SQL, using generic ALTER_TABLE")
             print(f"   💡 Tip: Use direct API call with full SQL for accurate detection")
             

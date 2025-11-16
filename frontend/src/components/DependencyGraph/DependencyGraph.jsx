@@ -38,8 +38,8 @@ function DependencyGraph({ fileName, dependencies }) {
     // Clear any existing SVG content
     d3.select(svgRef.current).selectAll("*").remove();
 
-    const width = 800;
-    const height = 600;
+    const width = 1200;  // Wider for better visibility
+    const height = 800;  // Taller for better visibility
     const margin = { top: 20, right: 20, bottom: 20, left: 20 };
 
     // Create SVG
@@ -98,15 +98,17 @@ function DependencyGraph({ fileName, dependencies }) {
       target: typeof link.target === 'string' ? nodeMap.get(link.target) : link.target
     })).filter(link => link.source && link.target); // Filter out invalid links
 
-    // Create force simulation
+    // Create force simulation with better spacing
     const simulation = d3.forceSimulation(data.nodes)
       .force("link", d3.forceLink(processedLinks)
         .id(d => d.id)
-        .distance(120))
+        .distance(150))  // Increased distance for better spacing
       .force("charge", d3.forceManyBody()
-        .strength(-450))
+        .strength(-800))  // Stronger repulsion to prevent overlap
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius(35));
+      .force("collision", d3.forceCollide().radius(50))  // Larger collision radius
+      .alphaDecay(0.02)  // Slower decay for smoother animation
+      .velocityDecay(0.4);  // More damping for stability
 
     // Create links
     const link = g.append("g")
@@ -144,13 +146,20 @@ function DependencyGraph({ fileName, dependencies }) {
       .attr("class", "node")
       .call(drag(simulation));
 
-    // Add circles to nodes
+    // Add circles to nodes with larger clickable area
     node.append("circle")
-      .attr("r", 20)
+      .attr("r", 25)  // Larger radius for easier interaction
       .attr("fill", d => colorScale[d.risk || 'normal'])
       .attr("stroke", "#fff")
       .attr("stroke-width", 2)
-      .style("cursor", "pointer");
+      .style("cursor", "grab")
+      .style("pointer-events", "all");  // Ensure clickable
+    
+    // Add invisible larger circle for easier dragging
+    node.append("circle")
+      .attr("r", 35)  // Larger invisible area for dragging
+      .attr("fill", "transparent")
+      .style("cursor", "grab");
 
     // Add labels to nodes
     node.append("text")
@@ -293,23 +302,38 @@ function DependencyGraph({ fileName, dependencies }) {
       node.attr("transform", d => `translate(${d.x},${d.y})`);
     });
 
-    // Drag behavior
+    // Enhanced drag behavior with better control
     function drag(simulation) {
       function dragstarted(event) {
-        if (!event.active) simulation.alphaTarget(0.3).restart();
+        if (!event.active) {
+          simulation.alphaTarget(0.3).restart();
+        }
+        // Fix the node position when dragging starts
         event.subject.fx = event.subject.x;
         event.subject.fy = event.subject.y;
+        // Change cursor to grabbing
+        d3.select(event.sourceEvent.target).style("cursor", "grabbing");
       }
 
       function dragged(event) {
+        // Update fixed position during drag
         event.subject.fx = event.x;
         event.subject.fy = event.y;
+        // Restart simulation to update positions
+        simulation.alpha(0.3).restart();
       }
 
       function dragended(event) {
-        if (!event.active) simulation.alphaTarget(0);
-        event.subject.fx = null;
-        event.subject.fy = null;
+        if (!event.active) {
+          simulation.alphaTarget(0);
+        }
+        // Keep the node at its dragged position (don't release)
+        // This allows users to manually position nodes
+        // Uncomment the next two lines if you want nodes to return to force layout after drag
+        // event.subject.fx = null;
+        // event.subject.fy = null;
+        // Change cursor back
+        d3.select(event.sourceEvent.target).style("cursor", "grab");
       }
 
       return d3.drag()
@@ -390,10 +414,14 @@ function DependencyGraph({ fileName, dependencies }) {
           📊 Dependency Graph: {fileName}
         </Typography>
         <Typography variant="caption" color="textSecondary" gutterBottom>
-          Drag nodes to rearrange. <strong>Click on nodes</strong> to view code details. Zoom with mouse wheel.
+          <strong>💡 Tips:</strong> 
+          <br/>• <strong>Drag nodes</strong> to freely reposition them - nodes stay where you place them
+          <br/>• <strong>Click nodes</strong> to view detailed code dependencies
+          <br/>• <strong>Mouse wheel</strong> to zoom in/out
+          <br/>• <strong>Pan</strong> by dragging the background
           <br/>
           <span style={{color: '#999'}}>Solid lines</span> = Forward dependencies | 
-          <span style={{color: '#ff6b6b'}}>Dashed red</span> = Reverse dependencies (files that depend on this)
+          <span style={{color: '#ff6b6b'}}>Dashed red</span> = Reverse dependencies
         </Typography>
       </Box>
       <div className="graph-wrapper">

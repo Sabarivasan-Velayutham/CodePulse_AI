@@ -239,18 +239,24 @@ class SchemaAnalyzer:
             )
         
         # ALTER TABLE table_name DROP COLUMN column_name
+        # Try more flexible patterns to handle incomplete SQL
         drop_col_match = re.search(
-            r'DROP\s+COLUMN\s+`?(\w+)`?',
+            r'DROP\s+(?:COLUMN\s+)?`?(\w+)`?',
             sql_upper,
             re.IGNORECASE
         )
         if drop_col_match:
-            return SchemaChange(
-                change_type="DROP_COLUMN",
-                table_name=table_name.upper(),
-                column_name=drop_col_match.group(1).upper(),
-                sql_statement=sql_statement
-            )
+            # Make sure it's not DROP TABLE
+            if 'TABLE' not in sql_upper or sql_upper.find('DROP') < sql_upper.find('TABLE'):
+                column_name = drop_col_match.group(1)
+                # Verify it's not a table name (heuristic: if it's the same as table_name, might be wrong)
+                if column_name.upper() != table_name.upper():
+                    return SchemaChange(
+                        change_type="DROP_COLUMN",
+                        table_name=table_name.upper(),
+                        column_name=column_name.upper(),
+                        sql_statement=sql_statement
+                    )
         
         # ALTER TABLE table_name MODIFY COLUMN column_name ...
         modify_col_match = re.search(

@@ -82,29 +82,55 @@ def listen_for_schema_changes():
                 print(f"   Object: {payload.get('object_identity', 'UNKNOWN')}")
                 print(f"   Schema: {payload.get('schema', 'public')}")
                 
-                # Extract SQL statement
+                # Extract SQL statement - try to get full SQL from payload
                 sql_statement = payload.get('sql', '')
-                if not sql_statement or sql_statement == 'NULL' or (sql_statement.startswith('ALTER TABLE') and len(sql_statement.split()) <= 2):
-                    # Try to reconstruct from payload
-                    object_type = payload.get('object_type', '')
-                    object_identity = payload.get('object_identity', '')
-                    tag = payload.get('tag', '')
+                table_name = payload.get('table_name', '')
+                operation = payload.get('operation', '')  # DROP_COLUMN, etc.
+                column_name = payload.get('column_name', '')
+                
+                # If we have operation type from trigger (e.g., DROP_COLUMN), use it
+                if operation == 'DROP_COLUMN' and column_name:
+                    sql_statement = f"ALTER TABLE {payload.get('schema', 'public')}.{table_name} DROP COLUMN {column_name}"
+                    print(f"   ✅ Reconstructed DROP COLUMN SQL from trigger payload")
+                
+                # Check if SQL is incomplete (just "ALTER TABLE table_name")
+                if not sql_statement or sql_statement == 'NULL' or (sql_statement.startswith('ALTER TABLE') and len(sql_statement.split()) <= 3):
+                    # Try to query PostgreSQL for the actual SQL from pg_stat_statements
+                    try:
+                        cursor.execute("""
+                            SELECT query 
+                            FROM pg_stat_statements 
+                            WHERE query LIKE %s 
+                            AND query LIKE %s
+                            ORDER BY calls DESC, mean_exec_time DESC 
+                            LIMIT 1
+                        """, (f'%ALTER TABLE%', f'%{table_name}%'))
+                        
+                        result = cursor.fetchone()
+                        if result and result[0]:
+                            sql_statement = result[0]
+                            print(f"   ✅ Retrieved full SQL from pg_stat_statements")
+                    except Exception as e:
+                        # pg_stat_statements not available or query failed
+                        print(f"   ⚠️  Could not query pg_stat_statements: {e}")
                     
-                    # Reconstruct SQL based on tag
-                    if tag == 'ALTER TABLE':
-                        # For ALTER TABLE, we need more info - try to get from pg_stat_statements or use a placeholder
-                        sql_statement = f"ALTER TABLE {object_identity}"
-                        print(f"   ⚠️  SQL statement not fully captured, using reconstructed: {sql_statement}")
-                    elif tag == 'CREATE TABLE':
-                        sql_statement = f"CREATE TABLE {object_identity}"
-                    elif tag == 'DROP TABLE':
-                        sql_statement = f"DROP TABLE {object_identity}"
-                    elif tag == 'DROP COLUMN':
-                        sql_statement = f"ALTER TABLE {object_identity} DROP COLUMN {payload.get('column_name', 'column')}"
-                    elif tag == 'ADD COLUMN':
-                        sql_statement = f"ALTER TABLE {object_identity} ADD COLUMN {payload.get('column_name', 'column')}"
-                    else:
-                        sql_statement = f"{tag} {object_identity}"
+                    # If still incomplete, try to reconstruct from payload
+                    if not sql_statement or sql_statement == 'NULL' or (sql_statement.startswith('ALTER TABLE') and len(sql_statement.split()) <= 3):
+                        object_type = payload.get('object_type', '')
+                        object_identity = payload.get('object_identity', '')
+                        tag = payload.get('tag', '')
+                        
+                        # Reconstruct SQL based on tag
+                        if tag == 'ALTER TABLE':
+                            sql_statement = f"ALTER TABLE {object_identity}"
+                            print(f"   ⚠️  SQL statement not fully captured, using reconstructed: {sql_statement}")
+                            print(f"   💡 Tip: Enable pg_stat_statements extension for full SQL capture")
+                        elif tag == 'CREATE TABLE':
+                            sql_statement = f"CREATE TABLE {object_identity}"
+                        elif tag == 'DROP TABLE':
+                            sql_statement = f"DROP TABLE {object_identity}"
+                        else:
+                            sql_statement = f"{tag} {object_identity}"
                 
                 if sql_statement:
                     print(f"   SQL: {sql_statement[:100]}...")
