@@ -352,6 +352,112 @@ class SchemaChangeOrchestrator:
                     print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
                     return schema_change
             
+            # Try to detect SET DEFAULT
+            if 'SET' in sql_upper and 'DEFAULT' in sql_upper and 'ALTER' in sql_upper and 'COLUMN' in sql_upper:
+                set_default_match = re.search(r'ALTER\s+COLUMN\s+`?(\w+)`?\s+SET\s+DEFAULT\s+(.+?)(?:\s|$)', sql_upper, re.IGNORECASE)
+                if set_default_match:
+                    schema_change.change_type = "SET_DEFAULT"
+                    schema_change.column_name = set_default_match.group(1).upper()
+                    default_value = set_default_match.group(2).strip().rstrip(';')
+                    schema_change.new_value = default_value
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect DROP DEFAULT
+            if 'DROP' in sql_upper and 'DEFAULT' in sql_upper and 'ALTER' in sql_upper and 'COLUMN' in sql_upper:
+                drop_default_match = re.search(r'ALTER\s+COLUMN\s+`?(\w+)`?\s+DROP\s+DEFAULT', sql_upper, re.IGNORECASE)
+                if drop_default_match:
+                    schema_change.change_type = "DROP_DEFAULT"
+                    schema_change.column_name = drop_default_match.group(1).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect SET NOT NULL
+            if 'SET' in sql_upper and 'NOT' in sql_upper and 'NULL' in sql_upper and 'ALTER' in sql_upper and 'COLUMN' in sql_upper:
+                set_not_null_match = re.search(r'ALTER\s+COLUMN\s+`?(\w+)`?\s+SET\s+NOT\s+NULL', sql_upper, re.IGNORECASE)
+                if set_not_null_match:
+                    schema_change.change_type = "SET_NOT_NULL"
+                    schema_change.column_name = set_not_null_match.group(1).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect DROP NOT NULL
+            if 'DROP' in sql_upper and 'NOT' in sql_upper and 'NULL' in sql_upper and 'ALTER' in sql_upper and 'COLUMN' in sql_upper:
+                drop_not_null_match = re.search(r'ALTER\s+COLUMN\s+`?(\w+)`?\s+DROP\s+NOT\s+NULL', sql_upper, re.IGNORECASE)
+                if drop_not_null_match:
+                    schema_change.change_type = "DROP_NOT_NULL"
+                    schema_change.column_name = drop_not_null_match.group(1).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect ADD CONSTRAINT
+            if 'ADD' in sql_upper and 'CONSTRAINT' in sql_upper:
+                add_constraint_match = re.search(r'ADD\s+CONSTRAINT\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if add_constraint_match:
+                    schema_change.change_type = "ADD_CONSTRAINT"
+                    constraint_name = add_constraint_match.group(1).upper()
+                    schema_change.column_name = constraint_name  # Reuse column_name field
+                    # Try to detect constraint type
+                    if 'PRIMARY KEY' in sql_upper:
+                        schema_change.new_value = "PRIMARY_KEY"
+                    elif 'FOREIGN KEY' in sql_upper:
+                        schema_change.new_value = "FOREIGN_KEY"
+                    elif 'UNIQUE' in sql_upper:
+                        schema_change.new_value = "UNIQUE"
+                    elif 'CHECK' in sql_upper:
+                        schema_change.new_value = "CHECK"
+                    else:
+                        schema_change.new_value = "CONSTRAINT"
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect DROP CONSTRAINT
+            if 'DROP' in sql_upper and 'CONSTRAINT' in sql_upper:
+                drop_constraint_match = re.search(r'DROP\s+CONSTRAINT\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if drop_constraint_match:
+                    schema_change.change_type = "DROP_CONSTRAINT"
+                    constraint_name = drop_constraint_match.group(1).upper()
+                    schema_change.column_name = constraint_name  # Reuse column_name field
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect RENAME TABLE
+            if 'RENAME' in sql_upper and 'TO' in sql_upper and 'COLUMN' not in sql_upper:
+                rename_table_match = re.search(r'RENAME\s+TO\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if rename_table_match:
+                    schema_change.change_type = "RENAME_TABLE"
+                    schema_change.old_value = schema_change.table_name
+                    schema_change.new_value = rename_table_match.group(1).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect ADD INDEX (CREATE INDEX)
+            if 'CREATE' in sql_upper and 'INDEX' in sql_upper:
+                create_index_match = re.search(r'CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s+ON\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if create_index_match:
+                    schema_change.change_type = "ADD_INDEX"
+                    index_name = create_index_match.group(1).upper()
+                    table_name_from_index = create_index_match.group(2).upper()
+                    schema_change.table_name = table_name_from_index
+                    schema_change.column_name = index_name  # Reuse column_name field
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
+            # Try to detect DROP INDEX
+            if 'DROP' in sql_upper and 'INDEX' in sql_upper:
+                drop_index_match = re.search(r'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if drop_index_match:
+                    schema_change.change_type = "DROP_INDEX"
+                    index_name = (drop_index_match.group(2) or drop_index_match.group(1)).upper()
+                    schema_change.column_name = index_name  # Reuse column_name field
+                    # Try to get table name from ON clause if present
+                    if 'ON' in sql_upper:
+                        on_match = re.search(r'ON\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                        if on_match:
+                            schema_change.table_name = on_match.group(1).upper()
+                    print(f"   ✅ Enhanced: Detected {schema_change.change_type} via regex")
+                    return schema_change
+            
             # Method 2: Query PostgreSQL system catalogs to detect what changed
             # IMPORTANT: Only use this for ADD operations. For DROP, we can't detect from current state.
             # Check if SQL suggests ADD operation (no DROP keyword found)

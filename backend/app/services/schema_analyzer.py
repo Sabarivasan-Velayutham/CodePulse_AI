@@ -304,6 +304,171 @@ class SchemaAnalyzer:
                 sql_statement=sql_statement
             )
         
+        # ALTER TABLE table_name ALTER COLUMN column_name TYPE new_type (PostgreSQL)
+        alter_col_type_match = re.search(
+            r'ALTER\s+COLUMN\s+`?(\w+)`?\s+TYPE\s+(\w+(?:\([^)]+\))?)',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if alter_col_type_match:
+            return SchemaChange(
+                change_type="MODIFY_COLUMN",
+                table_name=table_name.upper(),
+                column_name=alter_col_type_match.group(1).upper(),
+                new_value=alter_col_type_match.group(2),
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name ALTER COLUMN column_name SET DEFAULT value
+        set_default_match = re.search(
+            r'ALTER\s+COLUMN\s+`?(\w+)`?\s+SET\s+DEFAULT\s+(.+?)(?:\s|$)',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if set_default_match:
+            default_value = set_default_match.group(2).strip().rstrip(';')
+            return SchemaChange(
+                change_type="SET_DEFAULT",
+                table_name=table_name.upper(),
+                column_name=set_default_match.group(1).upper(),
+                new_value=default_value,
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name ALTER COLUMN column_name DROP DEFAULT
+        drop_default_match = re.search(
+            r'ALTER\s+COLUMN\s+`?(\w+)`?\s+DROP\s+DEFAULT',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if drop_default_match:
+            return SchemaChange(
+                change_type="DROP_DEFAULT",
+                table_name=table_name.upper(),
+                column_name=drop_default_match.group(1).upper(),
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name ALTER COLUMN column_name SET NOT NULL
+        set_not_null_match = re.search(
+            r'ALTER\s+COLUMN\s+`?(\w+)`?\s+SET\s+NOT\s+NULL',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if set_not_null_match:
+            return SchemaChange(
+                change_type="SET_NOT_NULL",
+                table_name=table_name.upper(),
+                column_name=set_not_null_match.group(1).upper(),
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name ALTER COLUMN column_name DROP NOT NULL
+        drop_not_null_match = re.search(
+            r'ALTER\s+COLUMN\s+`?(\w+)`?\s+DROP\s+NOT\s+NULL',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if drop_not_null_match:
+            return SchemaChange(
+                change_type="DROP_NOT_NULL",
+                table_name=table_name.upper(),
+                column_name=drop_not_null_match.group(1).upper(),
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name ADD CONSTRAINT constraint_name ...
+        add_constraint_match = re.search(
+            r'ADD\s+CONSTRAINT\s+`?(\w+)`?',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if add_constraint_match:
+            constraint_name = add_constraint_match.group(1)
+            # Try to extract constraint type
+            constraint_type = "CONSTRAINT"
+            if 'PRIMARY KEY' in sql_upper:
+                constraint_type = "PRIMARY_KEY"
+            elif 'FOREIGN KEY' in sql_upper:
+                constraint_type = "FOREIGN_KEY"
+            elif 'UNIQUE' in sql_upper:
+                constraint_type = "UNIQUE"
+            elif 'CHECK' in sql_upper:
+                constraint_type = "CHECK"
+            
+            return SchemaChange(
+                change_type="ADD_CONSTRAINT",
+                table_name=table_name.upper(),
+                column_name=constraint_name.upper(),  # Reuse column_name field for constraint name
+                new_value=constraint_type,
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name DROP CONSTRAINT constraint_name
+        drop_constraint_match = re.search(
+            r'DROP\s+CONSTRAINT\s+`?(\w+)`?',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if drop_constraint_match:
+            return SchemaChange(
+                change_type="DROP_CONSTRAINT",
+                table_name=table_name.upper(),
+                column_name=drop_constraint_match.group(1).upper(),  # Reuse column_name field for constraint name
+                sql_statement=sql_statement
+            )
+        
+        # ALTER TABLE table_name RENAME TO new_table_name
+        rename_table_match = re.search(
+            r'RENAME\s+TO\s+`?(\w+)`?',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if rename_table_match:
+            return SchemaChange(
+                change_type="RENAME_TABLE",
+                table_name=table_name.upper(),
+                old_value=table_name.upper(),
+                new_value=rename_table_match.group(1).upper(),
+                sql_statement=sql_statement
+            )
+        
+        # CREATE INDEX index_name ON table_name ...
+        create_index_match = re.search(
+            r'CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s+ON\s+`?(\w+)`?',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if create_index_match:
+            return SchemaChange(
+                change_type="ADD_INDEX",
+                table_name=create_index_match.group(2).upper(),
+                column_name=create_index_match.group(1).upper(),  # Reuse column_name field for index name
+                sql_statement=sql_statement
+            )
+        
+        # DROP INDEX index_name
+        drop_index_match = re.search(
+            r'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?(\w+)`?',
+            sql_upper,
+            re.IGNORECASE
+        )
+        if drop_index_match:
+            index_name = drop_index_match.group(2) or drop_index_match.group(1)
+            # Try to extract table name from SQL if available
+            table_from_sql = table_name  # Default to table from ALTER TABLE if present
+            if 'ON' in sql_upper:
+                on_match = re.search(r'ON\s+`?(\w+)`?', sql_upper, re.IGNORECASE)
+                if on_match:
+                    table_from_sql = on_match.group(1)
+            
+            return SchemaChange(
+                change_type="DROP_INDEX",
+                table_name=table_from_sql.upper() if table_from_sql else "UNKNOWN",
+                column_name=index_name.upper(),  # Reuse column_name field for index name
+                sql_statement=sql_statement
+            )
+        
         # If we only have "ALTER TABLE table_name" without operation details,
         # return a generic ALTER_TABLE change (we'll need to query DB for details)
         if sql_upper.startswith('ALTER TABLE'):

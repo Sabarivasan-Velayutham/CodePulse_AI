@@ -153,10 +153,10 @@ function AnalysisCard({ analysis }) {
               </div>
               <div className="stat-item">
                 <Typography variant="caption" color="textSecondary">
-                  Change Type
+                  Database Connections
                 </Typography>
-                <Typography variant="h6" style={{ fontSize: "0.9rem" }}>
-                  {analysis.schema_change?.change_type || "UNKNOWN"}
+                <Typography variant="h6">
+                  {(analysis.database_relationships?.forward?.length || 0) + (analysis.database_relationships?.reverse?.length || 0)}
                 </Typography>
               </div>
             </>
@@ -284,13 +284,19 @@ function AnalysisCard({ analysis }) {
                     <strong>Column:</strong> {analysis.schema_change.column_name}
                   </Typography>
                 )}
-                <Typography variant="body2">
-                  <strong>Change Type:</strong> {analysis.schema_change?.change_type}
-                </Typography>
-                {analysis.schema_change?.sql_statement && (
-                  <Typography variant="body2" style={{ fontFamily: "monospace", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-                    <strong>SQL:</strong> {analysis.schema_change.sql_statement}
-                  </Typography>
+                {analysis.database_relationships && (
+                  <>
+                    {analysis.database_relationships.forward?.length > 0 && (
+                      <Typography variant="body2" style={{ marginTop: "0.5rem" }}>
+                        <strong>References:</strong> {analysis.database_relationships.forward.map(r => r.target_table || r.table_name).filter(Boolean).join(", ")}
+                      </Typography>
+                    )}
+                    {analysis.database_relationships.reverse?.length > 0 && (
+                      <Typography variant="body2">
+                        <strong>Referenced By:</strong> {analysis.database_relationships.reverse.map(r => r.source_table || r.table_name).filter(Boolean).join(", ")}
+                      </Typography>
+                    )}
+                  </>
                 )}
               </Box>
 

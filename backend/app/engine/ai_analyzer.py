@@ -391,53 +391,87 @@ Return as JSON array:
         code_dependencies: List[Dict],
         db_relationships: Dict
     ) -> str:
-        """Build prompt for schema change analysis"""
+        """Build prompt for schema change analysis - works with minimal information"""
         
         affected_files = [dep["file_path"] for dep in code_dependencies]
-        forward_tables = [rel.get("target_table") for rel in db_relationships.get("forward", [])]
-        reverse_tables = [rel.get("source_table") for rel in db_relationships.get("reverse", [])]
+        forward_tables = [rel.get("target_table") or rel.get("table_name") for rel in db_relationships.get("forward", [])]
+        reverse_tables = [rel.get("source_table") or rel.get("table_name") for rel in db_relationships.get("reverse", [])]
+        
+        # Build relationship details
+        relationship_details = []
+        for rel in db_relationships.get("forward", [])[:5]:
+            rel_type = rel.get("type", "RELATIONSHIP")
+            target = rel.get("target_table") or rel.get("table_name", "unknown")
+            relationship_details.append(f"   - {rel_type}: References {target}")
+        
+        for rel in db_relationships.get("reverse", [])[:5]:
+            rel_type = rel.get("type", "RELATIONSHIP")
+            source = rel.get("source_table") or rel.get("table_name", "unknown")
+            relationship_details.append(f"   - {rel_type}: Referenced by {source}")
+        
+        # Determine table criticality based on name and relationships
+        table_name_lower = schema_change.table_name.lower()
+        is_critical = any(keyword in table_name_lower for keyword in [
+            "transaction", "payment", "account", "balance", "fraud", "customer", "transfer"
+        ])
+        
+        # Calculate counts for prompt
+        affected_file_count = len(affected_files)
+        reverse_table_count = len(reverse_tables)
+        total_relationships = len(forward_tables) + len(reverse_tables)
         
         prompt = f"""
 You are an expert database architect analyzing schema changes in a banking application.
 
-## SCHEMA CHANGE DETAILS
+## SCHEMA CHANGE CONTEXT
 
-Change Type: {schema_change.change_type}
 Table: {schema_change.table_name}
-Column: {schema_change.column_name or "N/A"}
-Old Value: {schema_change.old_value or "N/A"}
-New Value: {schema_change.new_value or "N/A"}
-SQL Statement: {schema_change.sql_statement}
+Table Criticality: {"CRITICAL" if is_critical else "STANDARD"} (based on banking domain keywords)
+Column: {schema_change.column_name or "Not specified - table-level change"}
+SQL Statement: {schema_change.sql_statement or "Not available - detected via database trigger"}
 
 ## IMPACT ANALYSIS
 
-Affected Code Files ({len(affected_files)}):
-{chr(10).join(f"   - {f}" for f in affected_files[:10])}
+Affected Code Files ({affected_file_count}):
+{chr(10).join(f"   - {f} ({code_dependencies[i].get('usage_count', 1)} usages)" for i, f in enumerate(affected_files[:10])) if affected_files else "   None detected"}
 
-Database Relationships:
-- Forward (tables this table references): {len(forward_tables)}
-- Reverse (tables that reference this): {len(reverse_tables)}
+Database Relationships ({total_relationships} total):
+{chr(10).join(relationship_details) if relationship_details else "   No explicit relationships detected"}
+
+Forward Relationships (tables this table references): {len(forward_tables)}
+{chr(10).join(f"   - {t}" for t in forward_tables[:5]) if forward_tables else "   None"}
+
+Reverse Relationships (tables that reference this): {reverse_table_count}
+{chr(10).join(f"   - {t}" for t in reverse_tables[:5]) if reverse_tables else "   None"}
 
 ## ANALYSIS REQUIRED
+
+IMPORTANT: You may not know the exact change type (ADD/DROP/MODIFY). Focus on:
+1. **Impact Analysis**: Based on code dependencies and database relationships
+2. **Risk Assessment**: Based on table criticality and connection complexity
+3. **Dependency Impact**: How changes to this table affect connected systems
+4. **Banking Domain Risks**: Financial data integrity, compliance, audit trails
 
 Analyze this schema change and provide insights in JSON format:
 
 {{
-  "summary": "2-3 sentence summary of schema change impact",
+  "summary": "2-3 sentence summary focusing on impact to dependencies and relationships, not the specific change type",
   "risks": [
-    "Risk 1: Specific concern about breaking changes",
-    "Risk 2: Data migration concerns",
-    "Risk 3: Application compatibility issues"
+    "Risk 1: Impact on {affected_file_count} code files that use this table",
+    "Risk 2: Cascading effects on {reverse_table_count} related tables",
+    "Risk 3: Banking-specific concern (data integrity, compliance, etc.)",
+    "Risk 4: Performance or availability concern"
   ],
-  "regulatory_concerns": "Any compliance/regulatory issues (data retention, audit trails, etc.)",
+  "regulatory_concerns": "Any compliance/regulatory issues based on table name and relationships (data retention, audit trails, financial reporting, etc.)",
   "recommendations": [
-    "Recommendation 1: Migration strategy",
-    "Recommendation 2: Testing approach",
-    "Recommendation 3: Deployment considerations"
+    "Review all {affected_file_count} affected code files before deployment",
+    "Test impact on {reverse_table_count} related tables",
+    "Verify data integrity across relationships",
+    "Plan deployment during low-traffic window"
   ],
-  "deployment_advice": "When/how to deploy this schema change",
-  "data_migration_required": true/false,
-  "backward_compatibility": "Is this change backward compatible?"
+  "deployment_advice": "When/how to deploy based on table criticality and dependency count",
+  "data_migration_required": "Unknown - assess based on table relationships and code dependencies",
+  "backward_compatibility": "Assess based on number of code dependencies ({affected_file_count} files) and database relationships ({total_relationships} connections)"
 }}
 
 ## BANKING CONTEXT

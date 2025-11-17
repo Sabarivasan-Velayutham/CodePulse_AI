@@ -282,17 +282,27 @@ class RiskScorer:
         db_relationship_score = 0.0
         ai_score = 0.0
         
-        # 1. CHANGE TYPE RISK (0-3 points)
-        change_type = schema_change.change_type
-        if change_type == "DROP_COLUMN" or change_type == "DROP_TABLE":
-            change_type_score = 3.0  # Highest risk
-        elif change_type == "MODIFY_COLUMN" or change_type == "RENAME_COLUMN":
-            change_type_score = 2.5
-        elif change_type == "ADD_COLUMN":
-            change_type_score = 1.0  # Lower risk, but still needs attention
-        elif change_type == "ALTER_TABLE":
-            # Generic ALTER TABLE - unknown operation, use medium risk
-            change_type_score = 2.0  # Medium risk (unknown operation)
+        # 1. TABLE CRITICALITY RISK (0-3 points)
+        # Base risk on table name and relationships, not exact change type
+        table_name_lower = schema_change.table_name.lower()
+        
+        # Determine table criticality
+        critical_keywords = ["transaction", "payment", "account", "balance", "fraud", "customer", "transfer"]
+        is_critical_table = any(keyword in table_name_lower for keyword in critical_keywords)
+        
+        if is_critical_table:
+            change_type_score = 2.5  # High base risk for critical tables
+        else:
+            change_type_score = 1.5  # Medium base risk for standard tables
+        
+        # Adjust based on relationships (more connections = higher risk)
+        total_relationships = len(db_relationships.get("forward", [])) + len(db_relationships.get("reverse", []))
+        if total_relationships > 5:
+            change_type_score += 0.5  # Very interconnected = higher risk
+        elif total_relationships > 2:
+            change_type_score += 0.3  # Moderately interconnected
+        
+        change_type_score = min(change_type_score, 3.0)  # Cap at 3.0
         
         # 2. CODE IMPACT RISK (0-3 points)
         affected_files = len(code_dependencies)
@@ -346,7 +356,7 @@ class RiskScorer:
             "level": risk_level,
             "color": color,
             "breakdown": {
-                "change_type": round(change_type_score, 1),
+                "table_criticality": round(change_type_score, 1),
                 "code_impact": round(code_impact_score, 1),
                 "database_relationships": round(db_relationship_score, 1),
                 "ai_analysis": round(ai_score, 1)
@@ -356,7 +366,8 @@ class RiskScorer:
                 "total_usages": total_usages,
                 "forward_relationships": forward_count,
                 "reverse_relationships": reverse_count,
-                "change_type": change_type
+                "table_name": schema_change.table_name,
+                "table_criticality": "CRITICAL" if is_critical_table else "STANDARD"
             }
         }
         
