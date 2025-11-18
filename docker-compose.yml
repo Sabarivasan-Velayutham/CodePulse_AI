@@ -36,6 +36,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-sabari}
       - POSTGRES_DB=${POSTGRES_DB:-banking_db}
+      - MONGO_URI=${MONGO_URI:-mongodb://host.docker.internal:27017/}
+      - MONGO_DB=${MONGO_DB:-banking_db}
     volumes:
       - ./backend:/app
       - ./tools:/tools
@@ -62,9 +64,30 @@ services:
     networks:
       - codeflow-network
 
+  # MongoDB service (optional - comment out if using local MongoDB)
+  # mongodb:
+  #   image: mongo:7.0
+  #   container_name: codeflow-mongodb
+  #   ports:
+  #     - "27017:27017"
+  #   environment:
+  #     - MONGO_INITDB_DATABASE=banking_db
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #     - mongodb_config:/data/configdb
+  #   networks:
+  #     - codeflow-network
+  #   healthcheck:
+  #     test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+  #     interval: 5s
+  #     timeout: 10s
+  #     retries: 5
+
 volumes:
   neo4j_data:
   neo4j_logs:
+  mongodb_data:
+  mongodb_config:
 
 networks:
   codeflow-network:

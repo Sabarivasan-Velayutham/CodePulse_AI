@@ -36,7 +36,8 @@ async def analyze_schema_change(
             sql_statement=request.sql_statement,
             database_name=request.database_name,
             change_id=request.change_id,
-            repository=request.repository
+            repository=request.repository,
+            database_type=request.database_type
         )
         
         # Store result
@@ -74,7 +75,8 @@ async def schema_change_webhook(
         sql_statement=request.sql_statement,
         database_name=request.database_name,
         change_id=request.change_id,
-        repository=request.repository
+        repository=request.repository,
+        database_type=request.database_type
     )
     
     return {
@@ -88,7 +90,8 @@ async def run_schema_analysis_background(
     sql_statement: str,
     database_name: str,
     change_id: str = None,
-    repository: str = None
+    repository: str = None,
+    database_type: str = None
 ):
     """Background task for schema analysis"""
     try:
@@ -96,7 +99,8 @@ async def run_schema_analysis_background(
             sql_statement=sql_statement,
             database_name=database_name,
             change_id=change_id,
-            repository=repository
+            repository=repository,
+            database_type=database_type
         )
         analysis_results[result["id"]] = result
     except Exception as e:

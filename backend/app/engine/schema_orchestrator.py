@@ -10,6 +10,7 @@ import uuid
 import os
 
 from app.services.schema_analyzer import SchemaAnalyzer, SchemaChange
+from app.services.mongodb_schema_analyzer import MongoDBSchemaAnalyzer, MongoSchemaChange
 from app.services.sql_extractor import SQLExtractor
 from app.engine.ai_analyzer import AIAnalyzer
 from app.engine.risk_scorer import RiskScorer
@@ -23,22 +24,48 @@ try:
 except ImportError:
     PSYCOPG2_AVAILABLE = False
 
+# Try to import pymongo for MongoDB queries
+try:
+    from pymongo import MongoClient
+    PYMONGO_AVAILABLE = True
+except ImportError:
+    PYMONGO_AVAILABLE = False
+
 
 class SchemaChangeOrchestrator:
     """Orchestrates database schema change analysis"""
     
     def __init__(self):
         self.schema_analyzer = SchemaAnalyzer()
+        self.mongodb_analyzer = MongoDBSchemaAnalyzer()
         self.sql_extractor = SQLExtractor()
         self.ai_analyzer = AIAnalyzer()
         self.risk_scorer = RiskScorer()
+    
+    def _detect_database_type(self, database_name: str, operation_statement: str, database_type: str = None) -> str:
+        """Detect database type from database name, operation, or explicit type"""
+        if database_type:
+            return database_type.lower()
+        
+        # Check database name
+        if database_name.startswith("mongodb_") or "mongo" in database_name.lower():
+            return "mongodb"
+        
+        # Check operation statement
+        op_lower = operation_statement.lower()
+        if any(keyword in op_lower for keyword in ["create collection", "drop collection", "createindex", "dropindex", "db."]):
+            return "mongodb"
+        
+        # Default to PostgreSQL
+        return "postgresql"
     
     async def analyze_schema_change(
         self,
         sql_statement: str,
         database_name: str,
         change_id: str = None,
-        repository: str = None
+        repository: str = None,
+        database_type: str = None
     ) -> Dict:
         """
         Analyze impact of a database schema change
@@ -55,12 +82,22 @@ class SchemaChangeOrchestrator:
         analysis_id = change_id or str(uuid.uuid4())
         start_time = datetime.now()
         
+        # Detect database type
+        db_type = self._detect_database_type(database_name, sql_statement, database_type)
+        
         print(f"\n{'='*60}")
         print(f"🗄️  Starting Schema Change Analysis: {analysis_id}")
-        print(f"   Database: {database_name}")
-        print(f"   SQL: {sql_statement[:100]}...")
+        print(f"   Database: {database_name} ({db_type.upper()})")
+        print(f"   Operation: {sql_statement[:100]}...")
         print(f"{'='*60}\n")
         
+        # Route to MongoDB or PostgreSQL analyzer
+        if db_type == "mongodb":
+            return await self._analyze_mongodb_schema_change(
+                sql_statement, database_name, change_id, repository, analysis_id
+            )
+        
+        # PostgreSQL analysis (existing code)
         try:
             # Step 1: Parse schema change
             print("Step 1/6: Parsing schema change...")
@@ -796,6 +833,262 @@ class SchemaChangeOrchestrator:
             ],
             "deployment_advice": "Deploy during maintenance window"
         }
+    
+    async def _analyze_mongodb_schema_change(
+        self,
+        operation_statement: str,
+        database_name: str,
+        change_id: str,
+        repository: str,
+        analysis_id: str
+    ) -> Dict:
+        """Analyze MongoDB schema change (similar to PostgreSQL but for MongoDB)"""
+        start_time = datetime.now()
+        
+        try:
+            # Step 1: Parse MongoDB schema change
+            print("Step 1/6: Parsing MongoDB schema change...")
+            mongo_change = self.mongodb_analyzer.parse_schema_change(operation_statement)
+            
+            if not mongo_change:
+                # Try to extract collection name
+                import re
+                coll_match = re.search(r'\b(\w+)\b', operation_statement)
+                if coll_match:
+                    collection_name = coll_match.group(1)
+                    mongo_change = MongoSchemaChange(
+                        change_type="MODIFY_COLLECTION",
+                        collection_name=collection_name.upper(),
+                        operation_statement=operation_statement
+                    )
+                    print(f"   ⚠️  Could not fully parse MongoDB operation, using generic MODIFY_COLLECTION")
+                else:
+                    raise ValueError(f"Could not parse MongoDB schema change: {operation_statement[:100]}")
+            
+            print(f"   ✅ Change Type: {mongo_change.change_type}")
+            print(f"   ✅ Collection: {mongo_change.collection_name}")
+            if mongo_change.index_name:
+                print(f"   ✅ Index: {mongo_change.index_name}")
+            if mongo_change.field_name:
+                print(f"   ✅ Field: {mongo_change.field_name}")
+            
+            # Step 2: Find code files that use this collection
+            print("Step 2/6: Finding code dependencies...")
+            code_dependencies = await self._find_code_dependencies(
+                mongo_change.collection_name,  # Use collection name as table name for code search
+                mongo_change.field_name
+            )
+            print(f"   ✅ Found {len(code_dependencies)} code files using this collection")
+            
+            # Step 3: Get MongoDB relationships
+            print("Step 3/6: Analyzing MongoDB relationships...")
+            db_relationships = await self._get_mongodb_relationships(
+                mongo_change.collection_name,
+                database_name
+            )
+            print(f"   ✅ Found {len(db_relationships.get('forward', []))} forward relationships")
+            print(f"   ✅ Found {len(db_relationships.get('reverse', []))} reverse relationships")
+            
+            # Step 4: Store in Neo4j
+            print("Step 4/6: Storing in dependency graph...")
+            await self._store_mongodb_schema_in_neo4j(
+                mongo_change,
+                database_name,
+                code_dependencies,
+                db_relationships
+            )
+            print(f"   ✅ Schema stored in Neo4j")
+            
+            # Step 5: AI Analysis
+            print("Step 5/6: Running AI analysis...")
+            try:
+                # Convert MongoDB change to schema change format for AI analyzer
+                schema_change_like = SchemaChange(
+                    change_type=mongo_change.change_type,
+                    table_name=mongo_change.collection_name,
+                    column_name=mongo_change.field_name or mongo_change.index_name,
+                    old_value=mongo_change.old_value,
+                    new_value=mongo_change.new_value,
+                    sql_statement=mongo_change.operation_statement
+                )
+                ai_insights = await self.ai_analyzer.analyze_schema_impact(
+                    schema_change_like,
+                    code_dependencies,
+                    db_relationships
+                )
+            except Exception as ai_error:
+                print(f"⚠️ AI analysis failed (non-blocking): {ai_error}")
+                ai_insights = self._fallback_schema_analysis()
+            
+            # Step 6: Risk Scoring
+            print("Step 6/6: Calculating risk score...")
+            schema_change_like = SchemaChange(
+                change_type=mongo_change.change_type,
+                table_name=mongo_change.collection_name,
+                column_name=mongo_change.field_name or mongo_change.index_name,
+                old_value=mongo_change.old_value,
+                new_value=mongo_change.new_value,
+                sql_statement=mongo_change.operation_statement
+            )
+            risk_score = self.risk_scorer.calculate_schema_risk(
+                schema_change_like,
+                code_dependencies,
+                db_relationships,
+                ai_insights
+            )
+            
+            # Compile results
+            result = self._compile_results(
+                analysis_id,
+                schema_change_like,
+                database_name,
+                code_dependencies,
+                db_relationships,
+                ai_insights,
+                risk_score,
+                start_time,
+                repository,
+                operation_statement
+            )
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            print(f"\n{'='*60}")
+            print(f"✅ MongoDB Schema Analysis Complete in {duration:.1f}s")
+            print(f"   Risk Score: {risk_score['score']}/10 - {risk_score['level']}")
+            print(f"   Affected Code Files: {len(code_dependencies)}")
+            print(f"{'='*60}\n")
+            
+            return result
+            
+        except Exception as e:
+            print(f"\n❌ MongoDB schema analysis failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    async def _get_mongodb_relationships(
+        self,
+        collection_name: str,
+        database_name: str
+    ) -> Dict:
+        """Get MongoDB collection relationships"""
+        relationships = {"forward": [], "reverse": []}
+        
+        if not PYMONGO_AVAILABLE:
+            print(f"   ⚠️ pymongo not available, using fallback")
+            return relationships
+        
+        try:
+            # Get MongoDB connection details
+            # For Docker: use host.docker.internal to reach host MongoDB
+            # For local: use localhost
+            default_uri = "mongodb://host.docker.internal:27017/" if os.path.exists("/.dockerenv") else "mongodb://localhost:27017/"
+            mongo_uri = os.getenv("MONGO_URI", default_uri)
+            # Extract DB name from database_name (might be "mongodb_banking_db")
+            db_name = database_name.replace("mongodb_", "") if database_name.startswith("mongodb_") else database_name
+            
+            client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+            db = client[db_name]
+            collection = db[collection_name]
+            
+            print(f"   🔌 Connecting to MongoDB: {mongo_uri}/{db_name}")
+            
+            # Get sample document to infer relationships
+            sample_doc = collection.find_one()
+            if sample_doc:
+                # Look for reference fields (e.g., customer_id, account_id)
+                for key, value in sample_doc.items():
+                    if key.endswith("_id") and key != "_id":
+                        referenced_collection = key.replace("_id", "").replace("Id", "")
+                        relationships["forward"].append({
+                            "type": "REFERENCE",
+                            "target_table": referenced_collection.upper(),
+                            "target_collection": referenced_collection,
+                            "field": key
+                        })
+            
+            # Find collections that might reference this one
+            all_collections = db.list_collection_names()
+            for other_coll_name in all_collections:
+                if other_coll_name.lower() == collection_name.lower():
+                    continue
+                
+                other_coll = db[other_coll_name]
+                sample_other = other_coll.find_one()
+                if sample_other:
+                    # Check if this collection is referenced
+                    ref_field = f"{collection_name.lower().rstrip('s')}_id"
+                    if ref_field in sample_other:
+                        relationships["reverse"].append({
+                            "type": "REFERENCED_BY",
+                            "source_table": other_coll_name.upper(),
+                            "source_collection": other_coll_name,
+                            "field": ref_field
+                        })
+            
+            client.close()
+            print(f"   ✅ Found {len(relationships['forward'])} forward relationships from MongoDB")
+            print(f"   ✅ Found {len(relationships['reverse'])} reverse relationships from MongoDB")
+            
+        except Exception as e:
+            print(f"   ⚠️ Could not query MongoDB for relationships: {e}")
+        
+        return relationships
+    
+    async def _store_mongodb_schema_in_neo4j(
+        self,
+        mongo_change: MongoSchemaChange,
+        database_name: str,
+        code_dependencies: List[Dict],
+        db_relationships: Dict
+    ):
+        """Store MongoDB schema change in Neo4j"""
+        try:
+            # Create database node
+            await neo4j_client.create_database_node(
+                name=database_name,
+                properties={"type": "mongodb"}
+            )
+            
+            # Create collection node
+            await neo4j_client.create_table_node(
+                table_name=mongo_change.collection_name,
+                database_name=database_name,
+                properties={"type": "collection", "change_type": mongo_change.change_type}
+            )
+            
+            # Create relationships to code files
+            for dep in code_dependencies:
+                await neo4j_client.create_dependency(
+                    source=dep["file_path"],
+                    target=mongo_change.collection_name,
+                    relationship_type="USES",
+                    properties={"usage_count": dep.get("usage_count", 1)}
+                )
+            
+            # Create database relationships
+            for rel in db_relationships.get("forward", []):
+                target = rel.get("target_table") or rel.get("target_collection", "")
+                if target:
+                    await neo4j_client.create_database_relationship(
+                        source_table=mongo_change.collection_name,
+                        target_table=target,
+                        relationship_type=rel.get("type", "REFERENCE"),
+                        properties={"field": rel.get("field", "")}
+                    )
+            
+            for rel in db_relationships.get("reverse", []):
+                source = rel.get("source_table") or rel.get("source_collection", "")
+                if source:
+                    await neo4j_client.create_database_relationship(
+                        source_table=source,
+                        target_table=mongo_change.collection_name,
+                        relationship_type=rel.get("type", "REFERENCED_BY"),
+                        properties={"field": rel.get("field", "")}
+                    )
+        
+        except Exception as e:
+            print(f"   ⚠️ Could not store MongoDB schema in Neo4j: {e}")
     
     def _compile_results(
         self,

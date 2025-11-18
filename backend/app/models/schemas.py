@@ -95,10 +95,11 @@ class AnalysisRequest(BaseModel):
 
 class SchemaChangeRequest(BaseModel):
     """Database schema change analysis request"""
-    sql_statement: str = Field(..., description="SQL DDL statement (ALTER TABLE, etc.)")
+    sql_statement: str = Field(..., description="SQL DDL statement (ALTER TABLE, etc.) or MongoDB operation")
     database_name: str = Field(..., description="Name of the database")
     change_id: Optional[str] = Field(None, description="Optional change identifier")
     repository: Optional[str] = Field(None, description="Repository name")
+    database_type: Optional[str] = Field(None, description="Database type: 'postgresql', 'mongodb', or None (auto-detect)")
     
     class Config:
         json_schema_extra = {

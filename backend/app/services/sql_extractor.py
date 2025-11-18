@@ -80,6 +80,21 @@ class SQLExtractor:
                 "full_query": ""
             })
         
+        # Also check for MongoDB collection usage patterns
+        # e.g., db.transactions.find(), collection.insertOne(), etc.
+        mongo_collections = self._extract_mongodb_collections(file_content)
+        for collection, line_num, context in mongo_collections:
+            if collection not in table_usage:
+                table_usage[collection] = []
+            
+            table_usage[collection].append({
+                "line_number": line_num,
+                "query_type": "MONGO_OPERATION",
+                "columns": [],
+                "context": context[:100] if context else "",
+                "full_query": ""
+            })
+        
         return table_usage
     
     def _extract_sql_queries(self, content: str) -> List[Tuple[str, int, str]]:
@@ -341,4 +356,42 @@ class SQLExtractor:
                         break
         
         return tables
+    
+    def _extract_mongodb_collections(self, content: str) -> List[Tuple[str, int, str]]:
+        """Extract MongoDB collection names from code"""
+        collections = []
+        lines = content.split('\n')
+        
+        # MongoDB patterns:
+        # db.collection_name.find()
+        # db.collection_name.insertOne()
+        # db.collection_name.insertMany()
+        # db.collection_name.updateOne()
+        # db.collection_name.updateMany()
+        # db.collection_name.deleteOne()
+        # db.collection_name.deleteMany()
+        # db.collection_name.aggregate()
+        # db.collection_name.findOne()
+        # collection_name.find()
+        # getCollection("collection_name")
+        
+        mongo_patterns = [
+            r'db\.(\w+)\.(?:find|insertOne|insertMany|updateOne|updateMany|deleteOne|deleteMany|aggregate|findOne|count|distinct|createIndex|dropIndex)',
+            r'["\'](\w+)["\']\.(?:find|insertOne|insertMany|updateOne|updateMany|deleteOne|deleteMany|aggregate|findOne)',
+            r'getCollection\s*\(["\'](\w+)["\']',
+            r'collection\s*=\s*["\'](\w+)["\']',
+            r'["\']collection["\']\s*:\s*["\'](\w+)["\']',
+            r'\.collection\s*\(["\'](\w+)["\']',
+        ]
+        
+        for line_num, line in enumerate(lines, 1):
+            for pattern in mongo_patterns:
+                matches = re.finditer(pattern, line, re.IGNORECASE)
+                for match in matches:
+                    collection_name = match.group(1)
+                    # Skip common non-collection names
+                    if collection_name.lower() not in ['db', 'client', 'database', 'mongo', 'mongodb']:
+                        collections.append((collection_name, line_num, line.strip()))
+        
+        return collections
 
