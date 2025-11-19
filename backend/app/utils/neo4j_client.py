@@ -256,6 +256,28 @@ class Neo4jClient:
             )
             return await result.single()
     
+    async def create_collection_usage(self, source_file: str, target_collection: str, database: str, usage_count: int = 1, field_name: str = ""):
+        """Create relationship: Code file USES Collection (MongoDB)"""
+        async with self.driver.session() as session:
+            query = """
+            MATCH (m:Module {name: $source_file})
+            MATCH (t:Table {name: $target_collection, database: $database})
+            MERGE (m)-[r:USES_COLLECTION]->(t)
+            SET r.usage_count = $usage_count,
+                r.field_name = $field_name,
+                r.last_updated = datetime()
+            RETURN r
+            """
+            result = await session.run(
+                query,
+                source_file=source_file,
+                target_collection=target_collection,
+                database=database,
+                usage_count=usage_count,
+                field_name=field_name
+            )
+            return await result.single()
+    
     async def create_table_relationship(self, source_table: str, target_table: str, database: str, relationship_type: str, properties: dict = None):
         """Create relationship between tables (foreign key, etc.)"""
         async with self.driver.session() as session:
@@ -325,18 +347,21 @@ class Neo4jClient:
             return {"forward": forward, "reverse": reverse}
     
     async def get_table_code_dependencies(self, table_name: str, database_name: str) -> List[Dict]:
-        """Get all code files that use a table"""
+        """Get all code files that use a table or collection"""
         if not self.driver:
             return []
         
         async with self.driver.session() as session:
+            # Query for both USES_TABLE (PostgreSQL) and USES_COLLECTION (MongoDB)
             query = """
-            MATCH (m:Module)-[r:USES_TABLE]->(t:Table {name: $table_name, database: $database_name})
+            MATCH (m:Module)-[r]->(t:Table {name: $table_name, database: $database_name})
+            WHERE type(r) IN ['USES_TABLE', 'USES_COLLECTION']
             RETURN 
                 m.name as file_name,
                 m.path as file_path,
                 r.usage_count as usage_count,
-                r.column_name as column_name
+                COALESCE(r.column_name, r.field_name, '') as column_name,
+                type(r) as relationship_type
             """
             
             dependencies = []
@@ -347,7 +372,8 @@ class Neo4jClient:
                         "file_name": record.get("file_name"),
                         "file_path": record.get("file_path", ""),
                         "usage_count": record.get("usage_count", 1),
-                        "column_name": record.get("column_name", "")
+                        "column_name": record.get("column_name", ""),
+                        "relationship_type": record.get("relationship_type", "USES_TABLE")
                     })
             except Exception as e:
                 print(f"⚠️ Error getting table code dependencies: {e}")

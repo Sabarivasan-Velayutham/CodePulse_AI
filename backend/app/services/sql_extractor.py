@@ -394,4 +394,39 @@ class SQLExtractor:
                         collections.append((collection_name, line_num, line.strip()))
         
         return collections
+    
+    def extract_mongodb_usage_only(self, file_path: str, file_content: str, collection_name: str) -> Dict[str, List[Dict]]:
+        """
+        Extract ONLY MongoDB collection usage (no SQL, no ORM, no heuristics)
+        Used when analyzing MongoDB schema changes to avoid false positives from PostgreSQL code
+        
+        Args:
+            file_path: Path to the file
+            file_content: Content of the file
+            collection_name: Collection name to search for
+        
+        Returns:
+            Dictionary mapping collection_name -> list of usage contexts
+        """
+        table_usage = {}
+        
+        # Only extract MongoDB collection patterns
+        mongo_collections = self._extract_mongodb_collections(file_content)
+        
+        # Filter to only the collection we're looking for
+        target_collection_lower = collection_name.lower()
+        for collection, line_num, context in mongo_collections:
+            if collection.lower() == target_collection_lower:
+                if collection not in table_usage:
+                    table_usage[collection] = []
+                
+                table_usage[collection].append({
+                    "line_number": line_num,
+                    "query_type": "MONGO_OPERATION",
+                    "columns": [],  # MongoDB doesn't have strict columns
+                    "context": context[:100] if context else "",
+                    "full_query": ""
+                })
+        
+        return table_usage
 

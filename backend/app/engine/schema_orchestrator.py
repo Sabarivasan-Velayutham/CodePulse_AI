@@ -194,7 +194,8 @@ class SchemaChangeOrchestrator:
                 risk_score,
                 start_time,
                 repository,
-                sql_statement
+                sql_statement,
+                database_type="postgresql"
             )
             
             duration = (datetime.now() - start_time).total_seconds()
@@ -215,9 +216,16 @@ class SchemaChangeOrchestrator:
     async def _find_code_dependencies(
         self,
         table_name: str,
-        column_name: str = None
+        column_name: str = None,
+        database_type: str = "postgresql"
     ) -> List[Dict]:
-        """Find all code files that reference this table/column"""
+        """Find all code files that reference this table/column or collection
+        
+        Args:
+            table_name: Table or collection name
+            column_name: Optional column/field name
+            database_type: "postgresql" or "mongodb" - determines which patterns to use
+        """
         code_dependencies = []
         
         # Search in sample-repo directory
@@ -240,13 +248,43 @@ class SchemaChangeOrchestrator:
             return code_dependencies
         
         print(f"   📁 Using repository path: {repo_path}")
+        print(f"   🔍 Database type: {database_type.upper()}")
         
-        # Walk through repository
+        # Determine which folders to search based on database type
+        # For MongoDB: search in banking-app-mongodb folder
+        # For PostgreSQL: search in banking-app and python-analytics folders
+        search_folders = []
+        if database_type == "mongodb":
+            search_folders = ["banking-app-mongodb"]
+        else:
+            search_folders = ["banking-app", "python-analytics"]
+        
+        # Walk through repository, but only in relevant folders
         for root, dirs, files in os.walk(repo_path):
             # Skip hidden directories and common ignore patterns
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['node_modules', '__pycache__']]
             
+            # Check if we're in a relevant folder
+            relative_root = os.path.relpath(root, repo_path)
+            
+            # At root level, filter directories to only search in relevant folders
+            if relative_root == ".":
+                dirs[:] = [d for d in dirs if d in search_folders]
+            else:
+                # Check if current path is in a relevant folder
+                path_parts = relative_root.split(os.sep)
+                # Check if any of the search folders is in the path
+                if not any(folder in path_parts for folder in search_folders):
+                    # Skip this directory tree
+                    dirs[:] = []
+                    continue
+            
             for file in files:
+                # For MongoDB: exclude SQL files (they're PostgreSQL-specific)
+                # For PostgreSQL: include SQL files
+                if database_type == "mongodb" and file.endswith('.sql'):
+                    continue
+                
                 # Only process code files
                 if not file.endswith(('.java', '.py', '.js', '.ts', '.sql')):
                     continue
@@ -258,8 +296,13 @@ class SchemaChangeOrchestrator:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read()
                     
-                    # Extract table usage
-                    table_usage = self.sql_extractor.extract_table_usage(relative_path, content)
+                    # Extract table/collection usage based on database type
+                    if database_type == "mongodb":
+                        # For MongoDB: only look for MongoDB collection patterns
+                        table_usage = self.sql_extractor.extract_mongodb_usage_only(relative_path, content, table_name)
+                    else:
+                        # For PostgreSQL: use full extraction (SQL + ORM + heuristics)
+                        table_usage = self.sql_extractor.extract_table_usage(relative_path, content)
                     
                     if table_name.lower() in [t.lower() for t in table_usage.keys()]:
                         usages = table_usage.get(table_name, [])
@@ -270,12 +313,20 @@ class SchemaChangeOrchestrator:
                                     usages = value
                                     break
                         
-                        # Filter by column if specified
+                        # Filter by column/field if specified
                         if column_name:
                             filtered_usages = []
                             for usage in usages:
-                                if column_name.lower() in [c.lower() for c in usage.get('columns', [])]:
-                                    filtered_usages.append(usage)
+                                # For MongoDB, check field_name; for PostgreSQL, check columns
+                                if database_type == "mongodb":
+                                    # MongoDB: check if field is mentioned in context
+                                    context = usage.get('context', '').lower()
+                                    if column_name.lower() in context or column_name.lower() in usage.get('full_query', '').lower():
+                                        filtered_usages.append(usage)
+                                else:
+                                    # PostgreSQL: check columns list
+                                    if column_name.lower() in [c.lower() for c in usage.get('columns', [])]:
+                                        filtered_usages.append(usage)
                             usages = filtered_usages
                         
                         if usages:
@@ -284,7 +335,8 @@ class SchemaChangeOrchestrator:
                                 "table": table_name,
                                 "column": column_name,
                                 "usages": usages,
-                                "usage_count": len(usages)
+                                "usage_count": len(usages),
+                                "database_type": database_type
                             })
                 
                 except Exception as e:
@@ -876,7 +928,8 @@ class SchemaChangeOrchestrator:
             print("Step 2/6: Finding code dependencies...")
             code_dependencies = await self._find_code_dependencies(
                 mongo_change.collection_name,  # Use collection name as table name for code search
-                mongo_change.field_name
+                mongo_change.field_name,
+                database_type="mongodb"  # Only look for MongoDB patterns, exclude SQL files
             )
             print(f"   ✅ Found {len(code_dependencies)} code files using this collection")
             
@@ -948,7 +1001,8 @@ class SchemaChangeOrchestrator:
                 risk_score,
                 start_time,
                 repository,
-                operation_statement
+                operation_statement,
+                database_type="mongodb"
             )
             
             duration = (datetime.now() - start_time).total_seconds()
@@ -1050,29 +1104,40 @@ class SchemaChangeOrchestrator:
                 properties={"type": "mongodb"}
             )
             
-            # Create collection node
+            # Create collection node (using correct parameter names)
             await neo4j_client.create_table_node(
-                table_name=mongo_change.collection_name,
-                database_name=database_name,
+                name=mongo_change.collection_name,
+                database=database_name,
                 properties={"type": "collection", "change_type": mongo_change.change_type}
             )
             
-            # Create relationships to code files
+            # Create relationships to code files (using USES_COLLECTION)
             for dep in code_dependencies:
-                await neo4j_client.create_dependency(
-                    source=dep["file_path"],
-                    target=mongo_change.collection_name,
-                    relationship_type="USES",
-                    properties={"usage_count": dep.get("usage_count", 1)}
+                file_name = dep["file_path"].split("/")[-1]
+                
+                # Create module node for code file
+                await neo4j_client.create_module_node(
+                    name=file_name,
+                    properties={"path": dep["file_path"]}
+                )
+                
+                # Create relationship: Code file USES Collection (MongoDB-specific)
+                await neo4j_client.create_collection_usage(
+                    source_file=file_name,
+                    target_collection=mongo_change.collection_name,
+                    database=database_name,
+                    usage_count=dep["usage_count"],
+                    field_name=mongo_change.field_name or ""
                 )
             
-            # Create database relationships
+            # Create database relationships (using create_table_relationship)
             for rel in db_relationships.get("forward", []):
                 target = rel.get("target_table") or rel.get("target_collection", "")
                 if target:
-                    await neo4j_client.create_database_relationship(
+                    await neo4j_client.create_table_relationship(
                         source_table=mongo_change.collection_name,
                         target_table=target,
+                        database=database_name,
                         relationship_type=rel.get("type", "REFERENCE"),
                         properties={"field": rel.get("field", "")}
                     )
@@ -1080,15 +1145,20 @@ class SchemaChangeOrchestrator:
             for rel in db_relationships.get("reverse", []):
                 source = rel.get("source_table") or rel.get("source_collection", "")
                 if source:
-                    await neo4j_client.create_database_relationship(
+                    await neo4j_client.create_table_relationship(
                         source_table=source,
                         target_table=mongo_change.collection_name,
+                        database=database_name,
                         relationship_type=rel.get("type", "REFERENCED_BY"),
                         properties={"field": rel.get("field", "")}
                     )
+            
+            print("   ✅ Schema stored in Neo4j")
         
         except Exception as e:
             print(f"   ⚠️ Could not store MongoDB schema in Neo4j: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _compile_results(
         self,
@@ -1101,21 +1171,22 @@ class SchemaChangeOrchestrator:
         risk_score: Dict,
         start_time: datetime,
         repository: str,
-        sql_statement: str
+        sql_statement: str,
+        database_type: str = "postgresql"
     ) -> Dict:
         """Compile all results into final format"""
         
         affected_files = [dep["file_path"] for dep in code_dependencies]
         affected_tables = []
         
-        # Add related tables from relationships
+        # Add related tables/collections from relationships
         for rel in db_relationships.get("forward", []):
-            if rel.get("target_table"):
-                affected_tables.append(rel["target_table"])
+            if rel.get("target_table") or rel.get("target_collection"):
+                affected_tables.append(rel.get("target_table") or rel.get("target_collection"))
         
         for rel in db_relationships.get("reverse", []):
-            if rel.get("source_table"):
-                affected_tables.append(rel["source_table"])
+            if rel.get("source_table") or rel.get("source_collection"):
+                affected_tables.append(rel.get("source_table") or rel.get("source_collection"))
         
         return {
             "id": analysis_id,
@@ -1123,6 +1194,7 @@ class SchemaChangeOrchestrator:
             "timestamp": datetime.now().isoformat(),
             "duration_seconds": (datetime.now() - start_time).total_seconds(),
             "database": database_name,
+            "database_type": database_type,  # Add database type to results
             "repository": repository or "unknown",
             "schema_change": {
                 "change_type": schema_change.change_type,

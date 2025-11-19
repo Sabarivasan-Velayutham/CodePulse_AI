@@ -61,7 +61,8 @@ function DependencyGraph({ fileName, dependencies }) {
 
     const linkTypes = [
       "CALL", "USE", "IMPORT", "CREATE", "EXTEND", "IMPLEMENT",
-      "CALLS", "IMPORTS", "READS", "WRITES", "DEPENDS_ON", "CONTAIN"
+      "CALLS", "IMPORTS", "READS", "WRITES", "DEPENDS_ON", "CONTAIN",
+      "USES_TABLE", "USES_COLLECTION"
     ];
     // Define arrow markers for links
     svg.append("defs").selectAll("marker")

@@ -137,7 +137,7 @@ function AnalysisCard({ analysis }) {
               </div>
               <div className="stat-item">
                 <Typography variant="caption" color="textSecondary">
-                  Related Tables
+                  {analysis.database_type === "mongodb" ? "Related Collections" : "Related Tables"}
                 </Typography>
                 <Typography variant="h6">
                   {analysis.summary?.tables_affected || analysis.affected_tables?.length || 0}
@@ -270,75 +270,82 @@ function AnalysisCard({ analysis }) {
             )}
 
           {/* Schema Change Details */}
-          {analysis.type === "schema_change" && (
-            <>
-              <Box mb={2}>
-                <Typography variant="h6" gutterBottom>
-                  🗄️ Schema Change Details
-                </Typography>
-                <Typography variant="body2">
-                  <strong>Table:</strong> {analysis.schema_change?.table_name}
-                </Typography>
-                {analysis.schema_change?.column_name && (
+          {analysis.type === "schema_change" && (() => {
+            const isMongoDB = analysis.database_type === "mongodb";
+            const entityLabel = isMongoDB ? "Collection" : "Table";
+            const fieldLabel = isMongoDB ? "Field/Index" : "Column";
+            const relatedLabel = isMongoDB ? "Related Collections" : "Related Tables";
+            
+            return (
+              <>
+                <Box mb={2}>
+                  <Typography variant="h6" gutterBottom>
+                    🗄️ Schema Change Details
+                  </Typography>
                   <Typography variant="body2">
-                    <strong>Column:</strong> {analysis.schema_change.column_name}
+                    <strong>{entityLabel}:</strong> {analysis.schema_change?.table_name}
                   </Typography>
-                )}
-                {analysis.database_relationships && (
-                  <>
-                    {analysis.database_relationships.forward?.length > 0 && (
-                      <Typography variant="body2" style={{ marginTop: "0.5rem" }}>
-                        <strong>References:</strong> {analysis.database_relationships.forward.map(r => r.target_table || r.table_name).filter(Boolean).join(", ")}
-                      </Typography>
-                    )}
-                    {analysis.database_relationships.reverse?.length > 0 && (
-                      <Typography variant="body2">
-                        <strong>Referenced By:</strong> {analysis.database_relationships.reverse.map(r => r.source_table || r.table_name).filter(Boolean).join(", ")}
-                      </Typography>
-                    )}
-                  </>
-                )}
-              </Box>
-
-              {/* Affected Code Files */}
-              {analysis.code_dependencies && analysis.code_dependencies.length > 0 && (
-                <Box mb={2}>
-                  <Typography variant="h6" gutterBottom>
-                    📝 Affected Code Files ({analysis.code_dependencies.length})
-                  </Typography>
-                  <ul className="risk-list">
-                    {analysis.code_dependencies.map((dep, index) => (
-                      <li key={index}>
-                        <Typography variant="body2">
-                          {dep.file_path} ({dep.usage_count} usages)
+                  {analysis.schema_change?.column_name && (
+                    <Typography variant="body2">
+                      <strong>{fieldLabel}:</strong> {analysis.schema_change.column_name}
+                    </Typography>
+                  )}
+                  {analysis.database_relationships && (
+                    <>
+                      {analysis.database_relationships.forward?.length > 0 && (
+                        <Typography variant="body2" style={{ marginTop: "0.5rem" }}>
+                          <strong>References:</strong> {analysis.database_relationships.forward.map(r => r.target_table || r.target_collection || r.table_name).filter(Boolean).join(", ")}
                         </Typography>
-                      </li>
-                    ))}
-                  </ul>
+                      )}
+                      {analysis.database_relationships.reverse?.length > 0 && (
+                        <Typography variant="body2">
+                          <strong>Referenced By:</strong> {analysis.database_relationships.reverse.map(r => r.source_table || r.source_collection || r.table_name).filter(Boolean).join(", ")}
+                        </Typography>
+                      )}
+                    </>
+                  )}
                 </Box>
-              )}
 
-              {/* Related Tables */}
-              {analysis.affected_tables && analysis.affected_tables.length > 0 && (
-                <Box mb={2}>
-                  <Typography variant="h6" gutterBottom>
-                    🔗 Related Tables ({analysis.affected_tables.length})
-                  </Typography>
-                  <div className="module-chips">
-                    {analysis.affected_tables.map((table, index) => (
-                      <Chip
-                        key={index}
-                        label={table}
-                        size="small"
-                        variant="outlined"
-                        style={{ margin: "0.25rem" }}
-                      />
-                    ))}
-                  </div>
-                </Box>
-              )}
-            </>
-          )}
+                {/* Affected Code Files */}
+                {analysis.code_dependencies && analysis.code_dependencies.length > 0 && (
+                  <Box mb={2}>
+                    <Typography variant="h6" gutterBottom>
+                      📝 Affected Code Files ({analysis.code_dependencies.length})
+                    </Typography>
+                    <ul className="risk-list">
+                      {analysis.code_dependencies.map((dep, index) => (
+                        <li key={index}>
+                          <Typography variant="body2">
+                            {dep.file_path} ({dep.usage_count} usages)
+                          </Typography>
+                        </li>
+                      ))}
+                    </ul>
+                  </Box>
+                )}
+
+                {/* Related Tables/Collections */}
+                {analysis.affected_tables && analysis.affected_tables.length > 0 && (
+                  <Box mb={2}>
+                    <Typography variant="h6" gutterBottom>
+                      🔗 {isMongoDB ? "Related Collections" : "Related Tables"} ({analysis.affected_tables.length})
+                    </Typography>
+                    <div className="module-chips">
+                      {analysis.affected_tables.map((table, index) => (
+                        <Chip
+                          key={index}
+                          label={table}
+                          size="small"
+                          variant="outlined"
+                          style={{ margin: "0.25rem" }}
+                        />
+                      ))}
+                    </div>
+                  </Box>
+                )}
+              </>
+            );
+          })()}
 
           {/* Affected Modules (for code changes) */}
           {analysis.type !== "schema_change" && (

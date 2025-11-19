@@ -197,11 +197,11 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                 nodes.append(file_node)
                 nodes_map[file_id] = file_node
             
-            # Create link: code file USES table
+            # Create link: code file USES table/collection
             links.append({
                 "source": file_id,
                 "target": f"table:{table_name}",
-                "type": "USES_TABLE",
+                "type": code_dep.get("relationship_type", "USES_TABLE"),
                 "usage_count": code_dep.get("usage_count", 1)
             })
             
