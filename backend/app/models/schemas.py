@@ -100,6 +100,8 @@ class SchemaChangeRequest(BaseModel):
     change_id: Optional[str] = Field(None, description="Optional change identifier")
     repository: Optional[str] = Field(None, description="Repository name")
     database_type: Optional[str] = Field(None, description="Database type: 'postgresql', 'mongodb', or None (auto-detect)")
+    github_repo_url: Optional[str] = Field(None, description="GitHub repository URL (e.g., 'owner/repo' or 'https://github.com/owner/repo'). If provided, code will be fetched from GitHub instead of local folder.")
+    github_branch: Optional[str] = Field("main", description="GitHub branch to use (default: main)")
     
     class Config:
         json_schema_extra = {
@@ -107,6 +109,8 @@ class SchemaChangeRequest(BaseModel):
                 "sql_statement": "ALTER TABLE transactions ADD COLUMN currency VARCHAR(3) DEFAULT 'USD'",
                 "database_name": "banking_db",
                 "change_id": "migration_001",
-                "repository": "banking-app"
+                "repository": "banking-app",
+                "github_repo_url": "owner/banking-app-mongodb",
+                "github_branch": "main"
             }
         }

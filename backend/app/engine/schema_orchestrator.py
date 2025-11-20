@@ -65,7 +65,9 @@ class SchemaChangeOrchestrator:
         database_name: str,
         change_id: str = None,
         repository: str = None,
-        database_type: str = None
+        database_type: str = None,
+        github_repo_url: str = None,
+        github_branch: str = "main"
     ) -> Dict:
         """
         Analyze impact of a database schema change
@@ -94,7 +96,7 @@ class SchemaChangeOrchestrator:
         # Route to MongoDB or PostgreSQL analyzer
         if db_type == "mongodb":
             return await self._analyze_mongodb_schema_change(
-                sql_statement, database_name, change_id, repository, analysis_id
+                sql_statement, database_name, change_id, repository, analysis_id, github_repo_url, github_branch
             )
         
         # PostgreSQL analysis (existing code)
@@ -136,9 +138,17 @@ class SchemaChangeOrchestrator:
             
             # Step 2: Find code files that use this table/column
             print("Step 2/6: Finding code dependencies...")
+            # Get GitHub repo URL from parameter, environment, or repository parameter
+            # Priority: github_repo_url parameter > GITHUB_REPO_URL_POSTGRESQL env > repository parameter
+            final_github_repo_url = github_repo_url or os.getenv("GITHUB_REPO_URL_POSTGRESQL") or repository
+            final_github_branch = github_branch or os.getenv("GITHUB_BRANCH", "main")
+            
             code_dependencies = await self._find_code_dependencies(
                 schema_change.table_name,
-                schema_change.column_name
+                schema_change.column_name,
+                database_type="postgresql",
+                github_repo_url=final_github_repo_url if final_github_repo_url and ("github.com" in final_github_repo_url or "/" in final_github_repo_url) else None,
+                github_branch=final_github_branch
             )
             
             print(f"   ✅ Found {len(code_dependencies)} code files using this table")
@@ -217,7 +227,9 @@ class SchemaChangeOrchestrator:
         self,
         table_name: str,
         column_name: str = None,
-        database_type: str = "postgresql"
+        database_type: str = "postgresql",
+        github_repo_url: str = None,
+        github_branch: str = "main"
     ) -> List[Dict]:
         """Find all code files that reference this table/column or collection
         
@@ -225,27 +237,54 @@ class SchemaChangeOrchestrator:
             table_name: Table or collection name
             column_name: Optional column/field name
             database_type: "postgresql" or "mongodb" - determines which patterns to use
+            github_repo_url: Optional GitHub repository URL (e.g., "owner/repo" or full URL)
+            github_branch: GitHub branch to use (default: main)
         """
         code_dependencies = []
         
-        # Search in sample-repo directory
-        # Try multiple possible paths (Docker vs local)
-        possible_paths = [
-            "/sample-repo",  # Docker mount path
-            os.path.join(os.getcwd(), "sample-repo"),  # Local development
-            os.path.join("/app", "sample-repo"),  # Alternative Docker path
-            "sample-repo"  # Relative path
-        ]
-        
         repo_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                repo_path = path
-                break
         
+        # If GitHub repository URL is provided, fetch from GitHub
+        if github_repo_url:
+            from app.utils.github_fetcher import github_fetcher
+            
+            # Determine subfolder based on database type
+            # For MongoDB: fetch banking-app-mongodb subfolder
+            # For PostgreSQL: fetch banking-app or python-analytics subfolders
+            subfolder = None
+            if database_type == "mongodb":
+                subfolder = "banking-app-mongodb"
+            # For PostgreSQL, we can search the whole repo or specific folders
+            
+            print(f"   🔗 Fetching from GitHub: {github_repo_url}")
+            repo_path = github_fetcher.fetch_repository(
+                repo_url=github_repo_url,
+                branch=github_branch,
+                subfolder=subfolder
+            )
+            
+            if not repo_path:
+                print(f"   ⚠️ Failed to fetch from GitHub, falling back to local repository")
+                # Fall through to local repository search
+        
+        # If no GitHub repo or fetch failed, search in local sample-repo directory
         if not repo_path:
-            print(f"⚠️ Repository path not found. Tried: {possible_paths}")
-            return code_dependencies
+            # Try multiple possible paths (Docker vs local)
+            possible_paths = [
+                "/sample-repo",  # Docker mount path
+                os.path.join(os.getcwd(), "sample-repo"),  # Local development
+                os.path.join("/app", "sample-repo"),  # Alternative Docker path
+                "sample-repo"  # Relative path
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    repo_path = path
+                    break
+            
+            if not repo_path:
+                print(f"⚠️ Repository path not found. Tried: {possible_paths}")
+                return code_dependencies
         
         print(f"   📁 Using repository path: {repo_path}")
         print(f"   🔍 Database type: {database_type.upper()}")
@@ -892,7 +931,9 @@ class SchemaChangeOrchestrator:
         database_name: str,
         change_id: str,
         repository: str,
-        analysis_id: str
+        analysis_id: str,
+        github_repo_url: str = None,
+        github_branch: str = "main"
     ) -> Dict:
         """Analyze MongoDB schema change (similar to PostgreSQL but for MongoDB)"""
         start_time = datetime.now()
@@ -926,10 +967,17 @@ class SchemaChangeOrchestrator:
             
             # Step 2: Find code files that use this collection
             print("Step 2/6: Finding code dependencies...")
+            # Get GitHub repo URL from parameter, environment, or repository parameter
+            # Priority: github_repo_url parameter > GITHUB_REPO_URL_MONGODB env > repository parameter
+            final_github_repo_url = github_repo_url or os.getenv("GITHUB_REPO_URL_MONGODB") or repository
+            final_github_branch = github_branch or os.getenv("GITHUB_BRANCH", "main")
+            
             code_dependencies = await self._find_code_dependencies(
                 mongo_change.collection_name,  # Use collection name as table name for code search
                 mongo_change.field_name,
-                database_type="mongodb"  # Only look for MongoDB patterns, exclude SQL files
+                database_type="mongodb",  # Only look for MongoDB patterns, exclude SQL files
+                github_repo_url=final_github_repo_url if final_github_repo_url and ("github.com" in final_github_repo_url or "/" in final_github_repo_url) else None,
+                github_branch=final_github_branch
             )
             print(f"   ✅ Found {len(code_dependencies)} code files using this collection")
             
@@ -1131,9 +1179,16 @@ class SchemaChangeOrchestrator:
                 )
             
             # Create database relationships (using create_table_relationship)
+            # First, ensure all related collections exist as nodes in Neo4j
             for rel in db_relationships.get("forward", []):
                 target = rel.get("target_table") or rel.get("target_collection", "")
                 if target:
+                    # Create node for target collection if it doesn't exist
+                    await neo4j_client.create_table_node(
+                        name=target,
+                        database=database_name,
+                        properties={"type": "collection"}
+                    )
                     await neo4j_client.create_table_relationship(
                         source_table=mongo_change.collection_name,
                         target_table=target,
@@ -1145,6 +1200,12 @@ class SchemaChangeOrchestrator:
             for rel in db_relationships.get("reverse", []):
                 source = rel.get("source_table") or rel.get("source_collection", "")
                 if source:
+                    # Create node for source collection if it doesn't exist (e.g., BALANCE_HISTORY)
+                    await neo4j_client.create_table_node(
+                        name=source,
+                        database=database_name,
+                        properties={"type": "collection"}
+                    )
                     await neo4j_client.create_table_relationship(
                         source_table=source,
                         target_table=mongo_change.collection_name,

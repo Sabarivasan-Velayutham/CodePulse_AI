@@ -66,10 +66,17 @@ export const apiService = {
     }
   },
   
-  // Get dependency graph for database tables (schema changes)
-  getTableDependencyGraph: async (tableName) => {
+  // Get dependency graph for database tables/collections (schema changes)
+  getTableDependencyGraph: async (tableName, databaseName, databaseType, analysisId) => {
     try {
-      const response = await api.get(`/api/v1/schema/graph/${tableName}`);
+      const params = new URLSearchParams();
+      if (databaseName) params.append('database_name', databaseName);
+      if (databaseType) params.append('database_type', databaseType);
+      if (analysisId) params.append('analysis_id', analysisId);
+      
+      const queryString = params.toString();
+      const url = `/api/v1/schema/graph/${tableName}${queryString ? '?' + queryString : ''}`;
+      const response = await api.get(url);
       return response.data;
     } catch (error) {
       console.error('Get table dependency graph failed:', error);

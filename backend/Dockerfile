@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Java (needed for DEPENDS tool)
+# Install Java (needed for DEPENDS tool) and Git (needed for GitHub integration)
 RUN apt-get update && \
-    apt-get install -y default-jre && \
+    apt-get install -y default-jre git && \
     rm -rf /var/lib/apt/lists/*
 # RUN apt-get install -y default-jre && \
 #     rm -rf /var/lib/apt/lists/*

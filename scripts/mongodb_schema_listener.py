@@ -23,6 +23,8 @@ BACKEND_URL = os.getenv("CODEFLOW_BACKEND_URL", "http://localhost:8000")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = os.getenv("MONGO_DB", "banking_db")
 REPOSITORY = os.getenv("REPOSITORY_NAME", "banking-app")
+GITHUB_REPO_URL = os.getenv("GITHUB_REPO_URL_MONGODB", None)  # GitHub repo URL for MongoDB code
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")  # GitHub branch to use
 
 # Track known collections and indexes to detect changes
 KNOWN_COLLECTIONS: Set[str] = set()
@@ -133,15 +135,24 @@ def trigger_analysis(change: Dict):
     try:
         print(f"\n   🔄 Triggering analysis...")
         
+        # Build request payload
+        payload = {
+            "sql_statement": operation_statement,
+            "database_name": f"mongodb_{DB_NAME}",
+            "change_id": f"mongo_{collection_name}_{operation}_{int(time.time())}",
+            "repository": REPOSITORY,
+            "database_type": "mongodb"
+        }
+        
+        # Add GitHub repository URL if configured
+        if GITHUB_REPO_URL:
+            payload["github_repo_url"] = GITHUB_REPO_URL
+            payload["github_branch"] = GITHUB_BRANCH
+            print(f"   📥 Using GitHub repository: {GITHUB_REPO_URL} (branch: {GITHUB_BRANCH})")
+        
         response = requests.post(
             f"{BACKEND_URL}/api/v1/schema/webhook",
-            json={
-                "sql_statement": operation_statement,
-                "database_name": f"mongodb_{DB_NAME}",
-                "change_id": f"mongo_{collection_name}_{operation}_{int(time.time())}",
-                "repository": REPOSITORY,
-                "database_type": "mongodb"
-            },
+            json=payload,
             timeout=30
         )
         
@@ -298,6 +309,10 @@ def listen_for_mongodb_changes():
     print(f"   URI: {MONGO_URI}")
     print(f"   Backend: {BACKEND_URL}")
     print(f"   Repository: {REPOSITORY}")
+    if GITHUB_REPO_URL:
+        print(f"   GitHub Repo: {GITHUB_REPO_URL} (branch: {GITHUB_BRANCH})")
+    else:
+        print(f"   GitHub Repo: Not configured (using local sample-repo)")
     print("\n✅ Listening for MongoDB schema changes...")
     print("   Automatic detection enabled (no manual notifications needed)\n")
     

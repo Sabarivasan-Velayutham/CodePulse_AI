@@ -37,7 +37,9 @@ async def analyze_schema_change(
             database_name=request.database_name,
             change_id=request.change_id,
             repository=request.repository,
-            database_type=request.database_type
+            database_type=request.database_type,
+            github_repo_url=request.github_repo_url,
+            github_branch=request.github_branch or "main"
         )
         
         # Store result
@@ -76,7 +78,9 @@ async def schema_change_webhook(
         database_name=request.database_name,
         change_id=request.change_id,
         repository=request.repository,
-        database_type=request.database_type
+        database_type=request.database_type,
+        github_repo_url=request.github_repo_url,
+        github_branch=request.github_branch or "main"
     )
     
     return {
@@ -91,7 +95,9 @@ async def run_schema_analysis_background(
     database_name: str,
     change_id: str = None,
     repository: str = None,
-    database_type: str = None
+    database_type: str = None,
+    github_repo_url: str = None,
+    github_branch: str = "main"
 ):
     """Background task for schema analysis"""
     try:
@@ -100,7 +106,9 @@ async def run_schema_analysis_background(
             database_name=database_name,
             change_id=change_id,
             repository=repository,
-            database_type=database_type
+            database_type=database_type,
+            github_repo_url=github_repo_url,
+            github_branch=github_branch
         )
         analysis_results[result["id"]] = result
     except Exception as e:
@@ -145,13 +153,24 @@ async def get_table_dependencies(table_name: str, database_name: str = "banking_
 
 
 @router.get("/schema/graph/{table_name}")
-async def get_table_dependency_graph(table_name: str, database_name: str = "banking_db"):
-    """Get dependency graph for a database table (for visualization)
+async def get_table_dependency_graph(
+    table_name: str, 
+    database_name: str = "banking_db",
+    database_type: str = None,
+    analysis_id: str = None
+):
+    """Get dependency graph for a database table/collection (for visualization)
     
     Includes:
-    - Direct code dependencies (files that use the table)
-    - Transitive code dependencies (files that depend on files using the table)
-    - Database relationships (foreign keys, views, triggers)
+    - Direct code dependencies (files that use the table/collection)
+    - Transitive code dependencies (files that depend on files using the table/collection)
+    - Database relationships (foreign keys, views, triggers, references)
+    
+    Args:
+        table_name: Table or collection name
+        database_name: Database name
+        database_type: "postgresql" or "mongodb" - filters SQL files for MongoDB
+        analysis_id: Optional analysis ID to get relationships from analysis result (more complete)
     """
     from app.utils.neo4j_client import neo4j_client
     from urllib.parse import unquote
@@ -159,12 +178,35 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
     # Decode URL-encoded table name
     table_name = unquote(table_name)
     
+    # Auto-detect database type from database_name if not provided
+    if not database_type:
+        if database_name.startswith("mongodb_") or "mongo" in database_name.lower():
+            database_type = "mongodb"
+        else:
+            database_type = "postgresql"
+    
     try:
-        # Get code dependencies (code files that use this table)
+        # Get code dependencies (code files that use this table/collection)
         code_deps = await neo4j_client.get_table_code_dependencies(table_name, database_name)
         
-        # Get database relationships (other tables related to this one)
-        db_rels = await neo4j_client.get_table_relationships(table_name, database_name)
+        # Get database relationships (other tables/collections related to this one)
+        # Try to get from analysis result first (more complete), then fallback to Neo4j
+        db_rels = None
+        if analysis_id and analysis_id in analysis_results:
+            # Use relationships from the analysis result (includes all detected relationships)
+            analysis_result = analysis_results[analysis_id]
+            if analysis_result.get("type") == "schema_change":
+                db_rels = analysis_result.get("database_relationships", {})
+                print(f"   ✅ Using relationships from analysis result (more complete)")
+        
+        # Fallback to Neo4j if no analysis result available
+        if not db_rels:
+            db_rels = await neo4j_client.get_table_relationships(table_name, database_name)
+            print(f"   ✅ Using relationships from Neo4j")
+        
+        # Ensure we have forward and reverse arrays
+        if not db_rels:
+            db_rels = {"forward": [], "reverse": []}
         
         # Transform to graph format
         nodes = []
@@ -172,19 +214,28 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
         nodes_map = {}
         processed_files = set()  # Track files we've already processed for transitive deps
         
-        # Add table node (source)
+        # Determine node type label based on database type
+        node_type_label = "collection" if database_type == "mongodb" else "table"
+        
+        # Add table/collection node (source)
         table_node = {
-            "id": f"table:{table_name}",
+            "id": f"{node_type_label}:{table_name}",
             "name": table_name,
-            "type": "table",
+            "type": node_type_label,
             "risk": "source"
         }
         nodes.append(table_node)
-        nodes_map[f"table:{table_name}"] = table_node
+        nodes_map[f"{node_type_label}:{table_name}"] = table_node
         
-        # Add code file nodes (code that directly uses this table)
+        # Add code file nodes (code that directly uses this table/collection)
         for code_dep in code_deps:
             file_name = code_dep.get("file_name", "Unknown")
+            file_path = code_dep.get("file_path", "")
+            
+            # Filter out SQL files for MongoDB
+            if database_type == "mongodb" and (file_name.endswith('.sql') or '.sql' in file_path):
+                continue
+            
             file_id = f"file:{file_name}"
             
             if file_id not in nodes_map:
@@ -198,10 +249,12 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                 nodes_map[file_id] = file_node
             
             # Create link: code file USES table/collection
+            # Use the relationship type from Neo4j (USES_TABLE or USES_COLLECTION)
+            relationship_type = code_dep.get("relationship_type", "USES_TABLE" if database_type == "postgresql" else "USES_COLLECTION")
             links.append({
                 "source": file_id,
-                "target": f"table:{table_name}",
-                "type": code_dep.get("relationship_type", "USES_TABLE"),
+                "target": f"{node_type_label}:{table_name}",
+                "type": relationship_type,
                 "usage_count": code_dep.get("usage_count", 1)
             })
             
@@ -216,6 +269,10 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                         if trans_dep.get("direction") == "reverse":  # Others depend on this file
                             dep_module = trans_dep.get("module")
                             if dep_module and dep_module != file_name:
+                                # Filter out SQL files for MongoDB in transitive dependencies
+                                if database_type == "mongodb" and dep_module.endswith('.sql'):
+                                    continue
+                                
                                 dep_file_id = f"file:{dep_module}"
                                 
                                 # Add the dependent file node
@@ -229,7 +286,7 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                                     nodes.append(dep_file_node)
                                     nodes_map[dep_file_id] = dep_file_node
                                 
-                                # Create link: dependent file -> file using table
+                                # Create link: dependent file -> file using table/collection
                                 links.append({
                                     "source": dep_file_id,
                                     "target": file_id,
@@ -240,35 +297,38 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                     print(f"⚠️ Error getting transitive dependencies for {file_name}: {e}")
                     # Continue with other files
         
-        # Add related table nodes (database relationships)
+        # Add related table/collection nodes (database relationships)
+        # Forward relationships: collections/tables this collection references
         for rel in db_rels.get("forward", []):
-            target_table = rel.get("target_table")
+            target_table = rel.get("target_table") or rel.get("target_collection")
             if target_table:
-                target_id = f"table:{target_table}"
+                target_id = f"{node_type_label}:{target_table}"
                 if target_id not in nodes_map:
                     target_node = {
                         "id": target_id,
                         "name": target_table,
-                        "type": "table",
+                        "type": node_type_label,
                         "risk": "low"
                     }
                     nodes.append(target_node)
                     nodes_map[target_id] = target_node
                 
                 links.append({
-                    "source": f"table:{table_name}",
+                    "source": f"{node_type_label}:{table_name}",
                     "target": target_id,
-                    "type": rel.get("type", "FOREIGN_KEY"),
+                    "type": rel.get("type", "FOREIGN_KEY" if database_type == "postgresql" else "REFERENCE"),
                     "direction": "forward"
                 })
         
+        # Reverse relationships: collections/tables that reference this collection
+        # This is where "Referenced By" comes from - these are the collections that have fields pointing to this one
         for rel in db_rels.get("reverse", []):
             rel_type = rel.get("type", "REFERENCED_BY")
-            source_table = rel.get("source_table")
+            source_table = rel.get("source_table") or rel.get("source_collection")
             
             if source_table:
-                # Handle VIEW relationships specially
-                if rel_type == "VIEW":
+                # Handle VIEW relationships specially (PostgreSQL only)
+                if rel_type == "VIEW" and database_type == "postgresql":
                     view_id = f"view:{source_table}"
                     if view_id not in nodes_map:
                         view_node = {
@@ -282,19 +342,20 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                     
                     links.append({
                         "source": view_id,
-                        "target": f"table:{table_name}",
+                        "target": f"{node_type_label}:{table_name}",
                         "type": "VIEW_DEPENDS_ON",
                         "direction": "reverse",
                         "description": rel.get("description", "View depends on this table")
                     })
                 else:
-                    # Regular table relationships
-                    source_id = f"table:{source_table}"
+                    # Regular table/collection relationships (REFERENCED_BY)
+                    # These are collections like BALANCE_HISTORY that reference ACCOUNTS
+                    source_id = f"{node_type_label}:{source_table}"
                     if source_id not in nodes_map:
                         source_node = {
                             "id": source_id,
                             "name": source_table,
-                            "type": "table",
+                            "type": node_type_label,
                             "risk": "low"
                         }
                         nodes.append(source_node)
@@ -302,7 +363,7 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
                     
                     links.append({
                         "source": source_id,
-                        "target": f"table:{table_name}",
+                        "target": f"{node_type_label}:{table_name}",
                         "type": rel_type,
                         "direction": "reverse"
                     })
@@ -316,12 +377,13 @@ async def get_table_dependency_graph(table_name: str, database_name: str = "bank
         print(f"❌ Error getting table dependency graph: {e}")
         import traceback
         traceback.print_exc()
-        # Return empty graph with just table node
+        # Return empty graph with just table/collection node
+        node_type_label = "collection" if database_type == "mongodb" else "table"
         return {
             "nodes": [{
-                "id": f"table:{table_name}",
+                "id": f"{node_type_label}:{table_name}",
                 "name": table_name,
-                "type": "table",
+                "type": node_type_label,
                 "risk": "source"
             }],
             "links": []

@@ -147,20 +147,57 @@ function DependencyGraph({ fileName, dependencies }) {
       .attr("class", "node")
       .call(drag(simulation));
 
-    // Add circles to nodes with larger clickable area
-    node.append("circle")
-      .attr("r", 25)  // Larger radius for easier interaction
-      .attr("fill", d => colorScale[d.risk || 'normal'])
-      .attr("stroke", "#fff")
-      .attr("stroke-width", 2)
-      .style("cursor", "grab")
-      .style("pointer-events", "all");  // Ensure clickable
-    
-    // Add invisible larger circle for easier dragging
-    node.append("circle")
-      .attr("r", 35)  // Larger invisible area for dragging
-      .attr("fill", "transparent")
-      .style("cursor", "grab");
+    // Helper function to determine if node is a database entity
+    const isDatabaseEntity = (d) => {
+      return d.type === 'table' || d.type === 'collection' || d.type === 'view' || 
+             d.id?.startsWith('table:') || d.id?.startsWith('collection:') || d.id?.startsWith('view:');
+    };
+
+    // Add shapes based on node type
+    // Database entities (tables/collections) = squares, Code files = circles
+    node.each(function(d) {
+      const nodeGroup = d3.select(this);
+      const size = 25; // Size for both circles and squares
+      
+      if (isDatabaseEntity(d)) {
+        // Draw square for database entities
+        nodeGroup.append("rect")
+          .attr("x", -size)
+          .attr("y", -size)
+          .attr("width", size * 2)
+          .attr("height", size * 2)
+          .attr("rx", 4) // Rounded corners
+          .attr("fill", d => colorScale[d.risk || 'normal'])
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 2)
+          .style("cursor", "grab")
+          .style("pointer-events", "all");
+        
+        // Invisible larger area for easier dragging
+        nodeGroup.append("rect")
+          .attr("x", -size * 1.4)
+          .attr("y", -size * 1.4)
+          .attr("width", size * 2.8)
+          .attr("height", size * 2.8)
+          .attr("fill", "transparent")
+          .style("cursor", "grab");
+      } else {
+        // Draw circle for code files
+        nodeGroup.append("circle")
+          .attr("r", size)
+          .attr("fill", d => colorScale[d.risk || 'normal'])
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 2)
+          .style("cursor", "grab")
+          .style("pointer-events", "all");
+        
+        // Invisible larger circle for easier dragging
+        nodeGroup.append("circle")
+          .attr("r", size * 1.4)
+          .attr("fill", "transparent")
+          .style("cursor", "grab");
+      }
+    });
 
     // Add labels to nodes
     node.append("text")
@@ -259,7 +296,8 @@ function DependencyGraph({ fileName, dependencies }) {
         }
       });
 
-      node.selectAll("circle")
+      // Update opacity for both circles and rectangles
+      node.selectAll("circle, rect")
         .attr("opacity", n => 
           n.id === d.id || connectedNodes.has(n.id) ? 1 : 0.3
         );
@@ -271,7 +309,7 @@ function DependencyGraph({ fileName, dependencies }) {
       });
     })
     .on("mouseout", function() {
-      node.selectAll("circle").attr("opacity", 1);
+      node.selectAll("circle, rect").attr("opacity", 1);
       link.attr("opacity", 1);
     });
 
@@ -349,12 +387,14 @@ function DependencyGraph({ fileName, dependencies }) {
       .attr("transform", `translate(${width - 180}, 20)`);
 
     const legendData = [
-      { label: "Source File", color: colorScale.source, type: "node" },
-      { label: "Critical", color: colorScale.critical, type: "node" },
-      { label: "High Risk", color: colorScale.high, type: "node" },
-      { label: "Medium Risk", color: colorScale.medium, type: "node" },
-      { label: "Low Risk", color: colorScale.low, type: "node" },
-      { label: "Normal", color: colorScale.normal, type: "node" },
+      { label: "Code File (Circle)", color: colorScale.normal, type: "node", shape: "circle" },
+      { label: "Table/Collection (Square)", color: colorScale.normal, type: "node", shape: "square" },
+      { label: "Source File", color: colorScale.source, type: "node", shape: "circle" },
+      { label: "Critical", color: colorScale.critical, type: "node", shape: "circle" },
+      { label: "High Risk", color: colorScale.high, type: "node", shape: "circle" },
+      { label: "Medium Risk", color: colorScale.medium, type: "node", shape: "circle" },
+      { label: "Low Risk", color: colorScale.low, type: "node", shape: "circle" },
+      { label: "Normal", color: colorScale.normal, type: "node", shape: "circle" },
       { label: "Forward Dep", color: "#999", type: "link", dash: "none" },
       { label: "Reverse Dep", color: "#ff6b6b", type: "link", dash: "5,5" }
     ];
@@ -364,9 +404,21 @@ function DependencyGraph({ fileName, dependencies }) {
         .attr("transform", `translate(0, ${i * 25})`);
 
       if (item.type === "node") {
-        legendRow.append("circle")
-          .attr("r", 8)
-          .attr("fill", item.color);
+        if (item.shape === "square") {
+          // Draw square for database entities
+          legendRow.append("rect")
+            .attr("x", -8)
+            .attr("y", -8)
+            .attr("width", 16)
+            .attr("height", 16)
+            .attr("rx", 2)
+            .attr("fill", item.color);
+        } else {
+          // Draw circle for code files
+          legendRow.append("circle")
+            .attr("r", 8)
+            .attr("fill", item.color);
+        }
       } else {
         // Link legend
         const line = legendRow.append("line")
@@ -463,7 +515,13 @@ function DependencyGraph({ fileName, dependencies }) {
                   sx={{ mr: 1 }}
                 />
                 <Chip 
-                  label={selectedNode.risk === 'source' ? 'Source File' : 'Dependent Module'}
+                  label={
+                    selectedNode.type === 'table' || selectedNode.type === 'collection' || selectedNode.type === 'view'
+                      ? 'Database Entity'
+                      : selectedNode.risk === 'source' 
+                        ? 'Source File' 
+                        : 'Dependent Module'
+                  }
                   variant="outlined"
                   size="small"
                 />
@@ -487,6 +545,8 @@ function DependencyGraph({ fileName, dependencies }) {
                   <Chip label="USE: Variable/field usage" size="small" sx={{ fontSize: '0.65rem', height: '18px' }} />
                   <Chip label="CREATE: Object instantiation" size="small" sx={{ fontSize: '0.65rem', height: '18px' }} />
                   <Chip label="CONTAIN: Contains/nested" size="small" sx={{ fontSize: '0.65rem', height: '18px' }} />
+                  <Chip label="USES_TABLE: Uses table (PostgreSQL)" size="small" sx={{ fontSize: '0.65rem', height: '18px' }} />
+                  <Chip label="USES_COLLECTION: Uses collection (MongoDB)" size="small" sx={{ fontSize: '0.65rem', height: '18px' }} />
                 </Box>
               </Box>
               
@@ -506,7 +566,12 @@ function DependencyGraph({ fileName, dependencies }) {
                         'CONTAIN': 'Contains/nested relationship',
                         'EXTEND': 'Class extension',
                         'IMPLEMENT': 'Interface implementation',
-                        'DEPENDS_ON': 'General dependency'
+                        'DEPENDS_ON': 'General dependency',
+                        'USES_TABLE': 'Code uses database table (PostgreSQL)',
+                        'USES_COLLECTION': 'Code uses database collection (MongoDB)',
+                        'FOREIGN_KEY': 'Foreign key relationship',
+                        'REFERENCE': 'Reference relationship (MongoDB)',
+                        'REFERENCED_BY': 'Referenced by another table/collection'
                       };
                       return descriptions[type] || type;
                     };

@@ -34,10 +34,13 @@ function AnalysisCard({ analysis }) {
       setLoadingGraph(true);
       try {
         if (analysis.type === "schema_change") {
-          // For schema changes, get table dependency graph
+          // For schema changes, get table/collection dependency graph
           const tableName = analysis.schema_change?.table_name;
+          const databaseName = analysis.database;
+          const databaseType = analysis.database_type;
+          const analysisId = analysis.id; // Pass analysis ID to get complete relationships
           if (tableName) {
-            const data = await apiService.getTableDependencyGraph(tableName);
+            const data = await apiService.getTableDependencyGraph(tableName, databaseName, databaseType, analysisId);
             setGraphData(data);
           }
         } else if (analysis.file_path) {
