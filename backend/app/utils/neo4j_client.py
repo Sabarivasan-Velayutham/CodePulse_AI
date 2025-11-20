@@ -379,6 +379,73 @@ class Neo4jClient:
                 print(f"⚠️ Error getting table code dependencies: {e}")
             
             return dependencies
+    
+    async def create_api_endpoint_node(self, endpoint: str, method: str, file_path: str, properties: dict = None):
+        """Create an API endpoint node"""
+        async with self.driver.session() as session:
+            query = """
+            MERGE (api:APIEndpoint {endpoint: $endpoint, method: $method})
+            SET api.file_path = $file_path,
+                api += $properties,
+                api.last_updated = datetime()
+            RETURN api
+            """
+            result = await session.run(
+                query,
+                endpoint=endpoint,
+                method=method,
+                file_path=file_path,
+                properties=properties or {}
+            )
+            return await result.single()
+    
+    async def create_api_consumer_relationship(self, consumer_file: str, api_endpoint: str, api_method: str, line_number: int = 0):
+        """Create relationship: Code file CONSUMES API endpoint"""
+        async with self.driver.session() as session:
+            query = """
+            MATCH (m:Module {name: $consumer_file})
+            MATCH (api:APIEndpoint {endpoint: $api_endpoint, method: $api_method})
+            MERGE (m)-[r:CONSUMES_API]->(api)
+            SET r.line_number = $line_number,
+                r.last_updated = datetime()
+            RETURN r
+            """
+            result = await session.run(
+                query,
+                consumer_file=consumer_file,
+                api_endpoint=api_endpoint,
+                api_method=api_method,
+                line_number=line_number
+            )
+            return await result.single()
+    
+    async def get_api_consumers(self, api_endpoint: str, api_method: str) -> List[Dict]:
+        """Get all code files that consume a specific API endpoint"""
+        if not self.driver:
+            return []
+        
+        async with self.driver.session() as session:
+            query = """
+            MATCH (m:Module)-[r:CONSUMES_API]->(api:APIEndpoint {endpoint: $api_endpoint, method: $api_method})
+            RETURN 
+                m.name as file_name,
+                m.path as file_path,
+                r.line_number as line_number
+            """
+            
+            consumers = []
+            try:
+                result = await session.run(query, api_endpoint=api_endpoint, api_method=api_method)
+                async for record in result:
+                    consumers.append({
+                        "file_name": record.get("file_name"),
+                        "file_path": record.get("file_path", ""),
+                        "line_number": record.get("line_number", 0)
+                    })
+            except Exception as e:
+                print(f"⚠️ Error getting API consumers: {e}")
+            
+            return consumers
 
 # Global instance
 neo4j_client = Neo4jClient()

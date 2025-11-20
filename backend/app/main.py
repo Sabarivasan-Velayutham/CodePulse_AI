@@ -6,6 +6,7 @@ from app.api import webhooks, analysis, schema
 import uvicorn
 from contextlib import asynccontextmanager
 from app.utils.logger import request_logger
+from app.api import api_contract
 
 
 # Define the lifespan event handler
@@ -122,6 +123,9 @@ async def get_request_stats():
 app.include_router(webhooks.router, prefix="/api/v1", tags=["webhooks"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
 app.include_router(schema.router, prefix="/api/v1", tags=["schema"])
+
+# API Contract Analysis
+app.include_router(api_contract.router, prefix="/api/v1", tags=["api-contract"])
 
 
 if __name__ == "__main__":

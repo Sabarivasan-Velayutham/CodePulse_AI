@@ -799,4 +799,213 @@ Use the actual code snippets above to identify specific risks and provide code-a
             "data_migration_required": True,
             "backward_compatibility": "Unknown - requires manual review"
         }
+    
+    async def analyze_api_contract_impact(
+        self,
+        file_path: str,
+        code_diff: str,
+        api_changes: List,
+        consumers: Dict,
+        repository_path: str = None
+    ) -> Dict:
+        """
+        Analyze impact of API contract changes
+        
+        Args:
+            file_path: Path to changed file
+            code_diff: Git diff showing changes
+            api_changes: List of API contract changes
+            consumers: Dictionary mapping API endpoints to consumer files
+            repository_path: Path to repository root
+        
+        Returns:
+            AI-generated insights for API contract changes
+        """
+        print(f"🤖 Running AI analysis for API contract changes in {file_path}...")
+        
+        prompt = self._build_api_contract_analysis_prompt(
+            file_path, code_diff, api_changes, consumers, repository_path
+        )
+        
+        try:
+            import asyncio
+            
+            safety_settings = {
+                'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
+                'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
+                'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
+                'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
+            }
+            
+            config = {
+                'temperature': 0.2,
+                'top_p': 0.8,
+                'top_k': 40,
+                'max_output_tokens': 8192,
+            }
+            
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.model.generate_content,
+                        prompt,
+                        generation_config=config,
+                        safety_settings=safety_settings
+                    ),
+                    timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                print("⚠️ AI API contract analysis timed out after 60 seconds")
+                return self._fallback_api_contract_analysis(api_changes, consumers)
+            
+            if not response.parts or not response.parts[0].text:
+                return self._fallback_api_contract_analysis(api_changes, consumers)
+            
+            response_text = response.parts[0].text
+            insights = self._parse_ai_response(response_text)
+            
+            print(f"✅ AI API contract analysis complete")
+            return insights
+            
+        except Exception as e:
+            print(f"❌ AI API contract analysis error: {e}")
+            return self._fallback_api_contract_analysis(api_changes, consumers)
+    
+    def _build_api_contract_analysis_prompt(
+        self,
+        file_path: str,
+        code_diff: str,
+        api_changes: List,
+        consumers: Dict,
+        repository_path: str = None
+    ) -> str:
+        """Build prompt for API contract change analysis"""
+        
+        breaking_changes = [c for c in api_changes if hasattr(c, 'change_type') and c.change_type == 'BREAKING']
+        total_consumers = sum(len(cons) for cons in consumers.values())
+        
+        # Format API changes
+        changes_text = []
+        for change in api_changes:
+            if hasattr(change, 'endpoint'):
+                changes_text.append(f"   - {change.method} {change.endpoint}: {change.change_type}")
+                if hasattr(change, 'details'):
+                    changes_text.append(f"     Reason: {change.details.get('reason', 'N/A')}")
+        
+        # Format consumers
+        consumers_text = []
+        for api_key, consumer_list in list(consumers.items())[:10]:  # Top 10
+            consumers_text.append(f"   - {api_key}: {len(consumer_list)} consumers")
+            for consumer in consumer_list[:3]:  # Top 3 per API
+                consumers_text.append(f"     • {consumer.get('file_path', 'unknown')} (line {consumer.get('line_number', 0)})")
+        
+        prompt = f"""
+You are an expert API architect analyzing API contract changes in a microservices banking application.
+
+## API CONTRACT CHANGE DETAILS
+
+File: {file_path}
+Type: API Endpoint Definition
+Criticality: HIGH (API changes affect multiple services)
+
+## CODE CHANGES MADE
+{code_diff}
+
+## DETECTED API CONTRACT CHANGES
+
+Total Changes: {len(api_changes)}
+Breaking Changes: {len(breaking_changes)}
+
+Changes:
+{chr(10).join(changes_text) if changes_text else "   None detected"}
+
+## API CONSUMERS AFFECTED
+
+Total Consumers: {total_consumers}
+
+Consumer Details:
+{chr(10).join(consumers_text) if consumers_text else "   No consumers found"}
+
+## ANALYSIS REQUIRED
+
+IMPORTANT: Write in clear, professional language that is easily understandable. Include relevant technical details (endpoint paths, HTTP methods, parameter names, consumer file paths) where appropriate. Balance accessibility with technical depth.
+
+Analyze these API contract changes and provide insights in JSON format:
+
+{{
+  "summary": "2-3 sentence summary explaining the API contract changes, which consumers are affected, and potential impact. Include specific endpoint paths, HTTP methods, and consumer file names when relevant.",
+  "risks": [
+    {{
+      "risk": "Risk title/name (e.g., 'Breaking Change: Required Parameter Added')",
+      "technical_context": "Technical details with specific endpoint paths, HTTP methods, parameter names, or consumer file paths. Example: 'POST /api/payments/process now requires cardNumber parameter. Frontend/src/payment/PaymentForm.jsx (line 45) does not send this parameter and will fail'",
+      "business_impact": "Business consequences and impact. Example: 'Payment processing will fail for all users, causing transaction failures and customer complaints'",
+      "cascading_effects": "Potential downstream effects on other systems or processes"
+    }}
+  ],
+  "regulatory_concerns": "Compliance issues with technical context. Example: 'API changes affecting payment endpoints may require PCI-DSS compliance review if authentication mechanisms are modified'",
+  "recommendations": [
+    "Each recommendation should correspond to a risk by index (recommendation[0] addresses risk[0], etc.). Provide actionable recommendations with technical specifics. Example: 'Make cardNumber parameter optional initially, then deprecate old version. Update Frontend/src/payment/PaymentForm.jsx to include cardNumber field'",
+    "Include specific files, endpoints, or API consumers to update. Example: 'Coordinate with frontend team to update PaymentForm.jsx, mobile app team to update PaymentService.swift before deploying API change'",
+    "Mention API versioning strategies, migration plans, or deployment considerations with technical details"
+  ],
+  "deployment_advice": "Technical deployment guidance. Example: 'Deploy during maintenance window. Use API versioning (v1, v2) to maintain backward compatibility. Update all {total_consumers} consumers before removing old API version. Monitor API error rates for first hour post-deployment'",
+  "migration_strategy": "Technical migration strategy. Example: 'Phase 1: Deploy new API version (v2) alongside v1. Phase 2: Update all consumers to use v2. Phase 3: Deprecate v1 after 30 days. Phase 4: Remove v1'"
+}}
+
+## MICROSERVICES CONTEXT
+
+Critical Considerations:
+- API breaking changes affect multiple services simultaneously
+- Frontend, mobile apps, and other microservices depend on API contracts
+- API versioning is essential for backward compatibility
+- Consumer coordination is critical before breaking changes
+
+Common API Change Risks:
+- Breaking changes cause immediate failures in consumer services
+- Missing required parameters cause validation errors
+- Response structure changes break consumer parsing logic
+- Endpoint removal causes 404 errors
+- Authentication changes break all consumers
+
+IMPORTANT WRITING GUIDELINES:
+- Use clear, professional language that is easily understandable
+- Include relevant technical details: endpoint paths, HTTP methods, parameter names, consumer file paths, line numbers
+- Explain technical concepts when introducing them, but don't oversimplify
+- Balance accessibility with technical depth - provide enough detail for developers to take action
+- Reference specific API endpoints, consumer files, and migration strategies
+- Include both technical impact (e.g., "API calls will fail", "validation errors") and business consequences
+- Use appropriate technical terminology (e.g., "API versioning", "backward compatibility", "consumer coordination")
+- Provide actionable recommendations with specific files, endpoints, or services to update
+
+Provide specific, actionable insights focused on API contract change risks in microservices architecture with appropriate technical context.
+"""
+        return prompt
+    
+    def _fallback_api_contract_analysis(self, api_changes: List, consumers: Dict) -> Dict:
+        """Fallback analysis for API contract changes"""
+        breaking_count = len([c for c in api_changes if hasattr(c, 'change_type') and c.change_type == 'BREAKING'])
+        total_consumers = sum(len(cons) for cons in consumers.values())
+        
+        return {
+            "summary": f"Detected {len(api_changes)} API contract changes ({breaking_count} breaking). {total_consumers} consumers may be affected.",
+            "risks": [
+                {
+                    "risk": "Breaking API Changes Detected",
+                    "technical_context": f"{breaking_count} breaking changes will cause API consumers to fail",
+                    "business_impact": f"{total_consumers} consumers will be affected, potentially causing service outages",
+                    "cascading_effects": "Service failures may cascade to dependent systems"
+                }
+            ] if breaking_count > 0 else [],
+            "regulatory_concerns": "API changes may affect service level agreements and customer experience",
+            "recommendations": [
+                "Review all breaking changes before deployment",
+                f"Update all {total_consumers} API consumers before deploying changes",
+                "Consider API versioning for backward compatibility",
+                "Coordinate with frontend, mobile, and microservices teams"
+            ] if breaking_count > 0 else [
+                "Changes are non-breaking - safe to deploy"
+            ],
+            "deployment_advice": "Coordinate consumer updates before deploying breaking changes",
+            "migration_strategy": "Use API versioning to maintain backward compatibility during migration"
+        }
 
