@@ -33,7 +33,8 @@ class AIAnalyzer:
         file_path: str,
         code_diff: str,
         dependencies: Dict,
-        database_dependencies: Dict = None
+        database_dependencies: Dict = None,
+        repository_path: str = None
     ) -> Dict:
         """
         Main AI analysis function
@@ -42,6 +43,8 @@ class AIAnalyzer:
             file_path: Path to changed file
             code_diff: Git diff of changes
             dependencies: Dependencies from DEPENDS
+            database_dependencies: Database table usage in the file
+            repository_path: Path to repository root (for reading related files)
 
         Returns:
             AI-generated insights
@@ -50,7 +53,7 @@ class AIAnalyzer:
 
         # Build comprehensive prompt
         prompt = self._build_analysis_prompt(
-            file_path, code_diff, dependencies, database_dependencies)
+            file_path, code_diff, dependencies, database_dependencies, repository_path)
 
         try:
             import asyncio
@@ -114,13 +117,19 @@ class AIAnalyzer:
         file_path: str,
         code_diff: str,
         dependencies: Dict,
-        database_dependencies: Dict = None
+        database_dependencies: Dict = None,
+        repository_path: str = None
     ) -> str:
-        """Build comprehensive analysis prompt"""
+        """Build comprehensive analysis prompt with code snippets from related files"""
 
         # Extract key info
         direct_deps = dependencies.get("direct_dependencies", [])
         indirect_deps = dependencies.get("indirect_dependencies", [])
+        
+        # Extract code snippets from related files and database usage
+        related_code_section = self._extract_related_code_snippets(
+            file_path, dependencies, database_dependencies, repository_path
+        )
 
         prompt = f"""
 You are an expert software architect analyzing code changes in a banking application.
@@ -145,27 +154,34 @@ Indirect Dependencies ({len(indirect_deps)}):
 {database_dependencies.get("tables", []) and f"Database Tables Used ({len(database_dependencies.get('tables', []))}):" or "Database Tables Used: None"}
 {self._format_database_dependencies(database_dependencies) if database_dependencies else "   None"}
 
+{related_code_section}
+
 ## ANALYSIS REQUIRED
+
+IMPORTANT: Write in clear, professional language that is easily understandable. Include relevant technical details (method names, class names, table names, query types) where appropriate. Balance accessibility with technical depth - explain technical concepts when needed but don't oversimplify.
 
 Analyze this change and provide insights in JSON format:
 
 {{
-  "summary": "2-3 sentence summary of functional impact",
+  "summary": "2-3 sentence summary explaining what this change does, which components are affected, and the main business/technical impact. Include specific file names, method names, or table names when relevant.",
   "risks": [
-    "Risk 1: Specific concern",
-    "Risk 2: Another concern",
-    "Risk 3: Third concern"
+    {{
+      "risk": "Risk title/name (e.g., 'Increased False Positives and Operational Overhead')",
+      "technical_context": "Technical details explaining the risk with specific code references, method names, file paths, or database operations",
+      "business_impact": "Business consequences and impact on operations, customers, or revenue",
+      "cascading_effects": "Potential downstream effects on other systems or processes"
+    }}
   ],
-  "regulatory_concerns": "Any compliance/regulatory issues (SOX, Basel, PCI-DSS)",
+  "regulatory_concerns": "Any compliance issues with technical context. Example: 'Modifications to transaction audit logging may affect SOX compliance reporting if audit trail format changes'",
   "affected_business_flows": [
-    "Business flow 1",
-    "Business flow 2"
+    "List specific business processes with technical details. Example: 'Customer payment processing (PaymentProcessor.java, TransactionDAO.java)' or 'Account balance reconciliation (BalanceService, Account table)'"
   ],
   "recommendations": [
-    "Recommendation 1",
-    "Recommendation 2"
+    "Each recommendation should correspond to a risk by index (recommendation[0] addresses risk[0], etc.). Provide actionable recommendations with technical context. Example: 'Conduct comprehensive testing of FraudDetection.java with the new thresholds. Review and update unit tests for the detectFraud() method to cover edge cases around the $10,000 threshold'",
+    "Include specific files, methods, or components to check. Example: 'Verify database connection pool configuration in DataSourceConfig before deployment'",
+    "Mention testing strategies, code review focus areas, or deployment considerations with technical specifics"
   ],
-  "deployment_advice": "When/how to deploy this change"
+  "deployment_advice": "Technical deployment guidance. Example: 'Deploy during low-traffic maintenance window (2-4 AM). Ensure database migration scripts are tested in staging. Monitor PaymentProcessor metrics for first 30 minutes post-deployment'"
 }}
 
 ## CONTEXT
@@ -184,9 +200,128 @@ Common Banking Risks:
 - Financial calculation errors
 - Security vulnerabilities
 
-Provide specific, actionable insights focused on banking domain risks.
+IMPORTANT WRITING GUIDELINES:
+- Use clear, professional language that is easily understandable
+- Include relevant technical details: method names, class names, file paths, table names, query types
+- Explain technical concepts when introducing them, but don't oversimplify
+- Balance accessibility with technical depth - provide enough detail for developers to take action
+- Reference specific code components, dependencies, and database interactions
+- Include both technical impact and business consequences
+- Use technical terminology appropriately (e.g., "foreign key constraint", "transaction rollback", "API endpoint")
+- Provide actionable recommendations with specific files, methods, or components to review
+
+Provide specific, actionable insights focused on banking domain risks with appropriate technical context.
+Use the code snippets above to understand how this change affects related files and database operations.
 """
         return prompt
+    
+    def _extract_related_code_snippets(
+        self,
+        file_path: str,
+        dependencies: Dict,
+        database_dependencies: Dict = None,
+        repository_path: str = None
+    ) -> str:
+        """
+        Extract code snippets from related files (dependencies and reverse dependencies)
+        to show how the changed file is used in the codebase
+        
+        Args:
+            file_path: Path to changed file
+            dependencies: Dependency information
+            database_dependencies: Database table usage
+            repository_path: Path to repository root
+        
+        Returns:
+            Formatted string with code snippets from related files
+        """
+        if not repository_path:
+            return "## RELATED CODE CONTEXT\n\n   Code snippets from related files not available (repository path not provided)."
+        
+        snippets = []
+        max_files = 3  # Limit to top 3 related files to avoid token limits
+        
+        # Get reverse dependencies (files that depend on this file)
+        reverse_deps = dependencies.get("reverse_direct_dependencies", [])[:max_files]
+        
+        if reverse_deps:
+            snippets.append("## RELATED CODE CONTEXT (Files that use this changed file)")
+            snippets.append("")
+            
+            for dep in reverse_deps:
+                source_file = dep.get("source", "")
+                if not source_file:
+                    continue
+                
+                # Try to find the file
+                full_path = None
+                possible_paths = [
+                    os.path.join(repository_path, source_file),
+                    source_file,
+                    os.path.join(os.getcwd(), "sample-repo", source_file),
+                    os.path.join("/sample-repo", source_file),
+                ]
+                
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        full_path = path
+                        break
+                
+                if full_path:
+                    try:
+                        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            file_lines = f.readlines()
+                        
+                        # Get line numbers where this file is used
+                        line_nums = dep.get("line_numbers", [])
+                        if not line_nums:
+                            line_nums = [dep.get("line", 0)] if dep.get("line", 0) > 0 else []
+                        
+                        if line_nums:
+                            line_num = line_nums[0]  # Use first line number
+                            # Extract code around usage (5 lines before, 10 lines after)
+                            start_line = max(0, line_num - 6)
+                            end_line = min(len(file_lines), line_num + 10)
+                            
+                            code_context = file_lines[start_line:end_line]
+                            if code_context:
+                                snippets.append(f"   File: {source_file} (uses {file_path.split('/')[-1]})")
+                                snippets.append(f"      Line {line_num}:")
+                                snippets.append(f"      ```")
+                                for i, line in enumerate(code_context):
+                                    if i == min(5, len(code_context) - 1):  # Highlight usage line
+                                        snippets.append(f"      >>> {line.rstrip()}")
+                                    else:
+                                        snippets.append(f"         {line.rstrip()}")
+                                snippets.append(f"      ```")
+                                snippets.append("")
+                    except Exception as e:
+                        # Skip if file can't be read
+                        pass
+        
+        # Also show database usage snippets if available
+        if database_dependencies and database_dependencies.get("tables"):
+            snippets.append("## DATABASE USAGE IN THIS FILE")
+            snippets.append("")
+            
+            for table_info in database_dependencies.get("tables", [])[:2]:  # Top 2 tables
+                table_name = table_info["table_name"]
+                usages = table_info.get("usages", [])
+                
+                if usages:
+                    usage = usages[0]  # First usage
+                    context = usage.get("context", "")
+                    query_type = usage.get("query_type", "")
+                    
+                    if context:
+                        snippets.append(f"   Table: {table_name} ({query_type})")
+                        snippets.append(f"      {context[:200]}")
+                        snippets.append("")
+        
+        if not snippets or len(snippets) <= 2:
+            return "## RELATED CODE CONTEXT\n\n   Code snippets from related files not available."
+        
+        return "\n".join(snippets)
 
     def _format_dependencies(self, deps: List[Dict]) -> str:
         """Format dependencies for prompt"""
@@ -322,7 +457,8 @@ Return as JSON array:
         self,
         schema_change,
         code_dependencies: List[Dict],
-        db_relationships: Dict
+        db_relationships: Dict,
+        repository_path: str = None
     ) -> Dict:
         """
         Analyze impact of database schema change
@@ -331,6 +467,7 @@ Return as JSON array:
             schema_change: SchemaChange object
             code_dependencies: List of code files that use the table
             db_relationships: Database relationships (foreign keys, etc.)
+            repository_path: Path to repository root (for reading code files)
         
         Returns:
             AI-generated insights for schema change
@@ -338,7 +475,7 @@ Return as JSON array:
         print(f"🤖 Running AI analysis for schema change: {schema_change.table_name}")
         
         prompt = self._build_schema_analysis_prompt(
-            schema_change, code_dependencies, db_relationships
+            schema_change, code_dependencies, db_relationships, repository_path
         )
         
         try:
@@ -389,9 +526,10 @@ Return as JSON array:
         self,
         schema_change,
         code_dependencies: List[Dict],
-        db_relationships: Dict
+        db_relationships: Dict,
+        repository_path: str = None
     ) -> str:
-        """Build prompt for schema change analysis - works with minimal information"""
+        """Build prompt for schema change analysis - includes actual code snippets"""
         
         affected_files = [dep["file_path"] for dep in code_dependencies]
         forward_tables = [rel.get("target_table") or rel.get("table_name") for rel in db_relationships.get("forward", [])]
@@ -420,6 +558,14 @@ Return as JSON array:
         reverse_table_count = len(reverse_tables)
         total_relationships = len(forward_tables) + len(reverse_tables)
         
+        # Extract code snippets from affected files
+        code_snippets_section = self._extract_code_snippets(
+            code_dependencies, 
+            schema_change.table_name,
+            schema_change.column_name,
+            repository_path
+        )
+        
         prompt = f"""
 You are an expert database architect analyzing schema changes in a banking application.
 
@@ -444,6 +590,8 @@ Forward Relationships (tables this table references): {len(forward_tables)}
 Reverse Relationships (tables that reference this): {reverse_table_count}
 {chr(10).join(f"   - {t}" for t in reverse_tables[:5]) if reverse_tables else "   None"}
 
+{code_snippets_section}
+
 ## ANALYSIS REQUIRED
 
 IMPORTANT: You may not know the exact change type (ADD/DROP/MODIFY). Focus on:
@@ -452,26 +600,29 @@ IMPORTANT: You may not know the exact change type (ADD/DROP/MODIFY). Focus on:
 3. **Dependency Impact**: How changes to this table affect connected systems
 4. **Banking Domain Risks**: Financial data integrity, compliance, audit trails
 
+IMPORTANT: Write in clear, professional language that is easily understandable. Include relevant technical details (table names, column names, file paths, query types, relationship types) where appropriate. Balance accessibility with technical depth.
+
 Analyze this schema change and provide insights in JSON format:
 
 {{
-  "summary": "2-3 sentence summary focusing on impact to dependencies and relationships, not the specific change type",
+  "summary": "2-3 sentence summary explaining the schema change impact, which code files are affected, and potential technical/business consequences. Include specific table names, column names, and affected file paths when relevant.",
   "risks": [
-    "Risk 1: Impact on {affected_file_count} code files that use this table",
-    "Risk 2: Cascading effects on {reverse_table_count} related tables",
-    "Risk 3: Banking-specific concern (data integrity, compliance, etc.)",
-    "Risk 4: Performance or availability concern"
+    {{
+      "risk": "Risk title/name (e.g., 'Breaking Changes to Application Code')",
+      "technical_context": "Technical details with specific code references, file paths, query types, or database operations. Example: 'Schema change to TRANSACTIONS table may break SELECT queries in TransactionDAO.java (lines 45-67) that reference the modified column'",
+      "business_impact": "Business consequences and impact. Example: 'Foreign key constraint changes could cause cascading deletes affecting BALANCE_HISTORY table, potentially impacting account reconciliation processes'",
+      "cascading_effects": "Potential downstream effects on other systems, tables, or processes"
+    }}
   ],
-  "regulatory_concerns": "Any compliance/regulatory issues based on table name and relationships (data retention, audit trails, financial reporting, etc.)",
+  "regulatory_concerns": "Compliance issues with technical context. Example: 'Removing audit_timestamp column from TRANSACTIONS table may violate SOX compliance requirements for transaction audit trails'",
   "recommendations": [
-    "Review all {affected_file_count} affected code files before deployment",
-    "Test impact on {reverse_table_count} related tables",
-    "Verify data integrity across relationships",
-    "Plan deployment during low-traffic window"
+    "Each recommendation should correspond to a risk by index (recommendation[0] addresses risk[0], etc.). Provide actionable recommendations with technical specifics. Example: 'Review and update all SQL queries in TransactionDAO.java, PaymentProcessor.java that reference the modified column. Update ORM mappings if using JPA/Hibernate'",
+    "Include specific files, methods, or database operations to check. Example: 'Verify foreign key constraints in related tables (BALANCE_HISTORY, PAYMENT_LOG) before deployment'",
+    "Mention testing strategies, migration scripts, or rollback procedures with technical details"
   ],
-  "deployment_advice": "When/how to deploy based on table criticality and dependency count",
-  "data_migration_required": "Unknown - assess based on table relationships and code dependencies",
-  "backward_compatibility": "Assess based on number of code dependencies ({affected_file_count} files) and database relationships ({total_relationships} connections)"
+  "deployment_advice": "Technical deployment guidance. Example: 'Deploy during maintenance window. Execute database migration script in staging first. Update application code in TransactionDAO.java before schema change. Monitor query performance on TRANSACTIONS table post-deployment'",
+  "data_migration_required": "Yes/No with technical explanation. Example: 'Yes - Column type change from VARCHAR to DECIMAL requires data migration script to convert existing string values to numeric format'",
+  "backward_compatibility": "Technical explanation with specifics. Example: 'No - Old code expecting VARCHAR column will fail. All {affected_file_count} affected files must be updated before deployment'"
 }}
 
 ## BANKING CONTEXT
@@ -491,9 +642,142 @@ Common Schema Change Risks:
 - Compliance violations from missing audit columns
 - Transaction failures from constraint violations
 
-Provide specific, actionable insights focused on database schema change risks in banking domain.
+IMPORTANT WRITING GUIDELINES:
+- Use clear, professional language that is easily understandable
+- Include relevant technical details: table names, column names, file paths, query types, relationship types, method names
+- Explain technical concepts when introducing them, but don't oversimplify
+- Balance accessibility with technical depth - provide enough detail for developers and DBAs to take action
+- Reference specific code files, database tables, foreign keys, indexes, and query patterns
+- Include both technical impact (e.g., "SELECT queries will fail", "foreign key constraint violations") and business consequences
+- Use appropriate technical terminology (e.g., "foreign key constraint", "index performance", "query execution plan", "ORM mapping")
+- Provide actionable recommendations with specific files, methods, tables, or SQL operations to review
+
+Provide specific, actionable insights focused on database schema change risks in banking domain with appropriate technical context.
+Use the actual code snippets above to identify specific risks and provide code-aware recommendations with technical details.
 """
         return prompt
+    
+    def _extract_code_snippets(
+        self,
+        code_dependencies: List[Dict],
+        table_name: str,
+        column_name: str = None,
+        repository_path: str = None
+    ) -> str:
+        """
+        Extract code snippets from affected files showing how the table/collection is used
+        
+        Args:
+            code_dependencies: List of code dependency dictionaries
+            table_name: Table/collection name
+            column_name: Optional column/field name
+            repository_path: Path to repository root
+        
+        Returns:
+            Formatted string with code snippets
+        """
+        if not code_dependencies or not repository_path:
+            return "## CODE SNIPPETS\n\n   Code snippets not available (repository path not provided)."
+        
+        snippets = []
+        max_files = 5  # Limit to top 5 files to avoid token limits
+        max_snippets_per_file = 2  # Limit snippets per file
+        
+        for dep in code_dependencies[:max_files]:
+            file_path = dep.get("file_path", "")
+            usages = dep.get("usages", [])
+            
+            if not file_path or not usages:
+                continue
+            
+            # Try to read the actual file
+            full_path = None
+            possible_paths = [
+                os.path.join(repository_path, file_path),
+                file_path,  # Already absolute
+                os.path.join(os.getcwd(), "sample-repo", file_path),
+                os.path.join("/sample-repo", file_path),
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    full_path = path
+                    break
+            
+            if not full_path:
+                # File not found, use context from usages
+                file_snippets = []
+                for usage in usages[:max_snippets_per_file]:
+                    context = usage.get("context", "")
+                    line_num = usage.get("line_number", 0)
+                    query_type = usage.get("query_type", "")
+                    
+                    if context:
+                        file_snippets.append(f"      Line {line_num} ({query_type}): {context[:150]}")
+                
+                if file_snippets:
+                    snippets.append(f"   File: {file_path}")
+                    snippets.extend(file_snippets)
+                continue
+            
+            # Read file and extract code around usage lines
+            try:
+                with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    file_lines = f.readlines()
+                
+                file_snippets = []
+                processed_lines = set()  # Avoid duplicate snippets for same line
+                
+                for usage in usages[:max_snippets_per_file]:
+                    line_num = usage.get("line_number", 0)
+                    query_type = usage.get("query_type", "")
+                    
+                    if line_num <= 0 or line_num in processed_lines:
+                        continue
+                    
+                    processed_lines.add(line_num)
+                    
+                    # Extract code around the usage line (5 lines before, 10 lines after)
+                    start_line = max(0, line_num - 6)  # 0-indexed, so -6 for 5 lines before
+                    end_line = min(len(file_lines), line_num + 10)  # 10 lines after
+                    
+                    code_context = file_lines[start_line:end_line]
+                    code_snippet = "".join(code_context).strip()
+                    
+                    if code_snippet:
+                        # Highlight the line where table is used
+                        snippet_lines = code_snippet.split('\n')
+                        if len(snippet_lines) > 0:
+                            # Find the actual usage line in the snippet
+                            usage_line_idx = min(5, len(snippet_lines) - 1)  # Usually around line 5-6
+                            
+                            file_snippets.append(f"      Line {line_num} ({query_type}):")
+                            file_snippets.append(f"      ```")
+                            for i, line in enumerate(snippet_lines):
+                                # Mark the usage line
+                                if i == usage_line_idx:
+                                    file_snippets.append(f"      >>> {line.rstrip()}")
+                                else:
+                                    file_snippets.append(f"         {line.rstrip()}")
+                            file_snippets.append(f"      ```")
+                
+                if file_snippets:
+                    snippets.append(f"   File: {file_path}")
+                    snippets.extend(file_snippets)
+                    snippets.append("")  # Empty line between files
+                    
+            except Exception as e:
+                # If file read fails, use context from usage
+                context = usages[0].get("context", "") if usages else ""
+                if context:
+                    snippets.append(f"   File: {file_path}")
+                    snippets.append(f"      Context: {context[:200]}")
+                    snippets.append("")
+        
+        if not snippets:
+            return "## CODE SNIPPETS\n\n   Code snippets not available (files could not be read)."
+        
+        return "## CODE SNIPPETS (How the table/collection is used in code)\n\n" + "\n".join(snippets)
     
     def _fallback_schema_analysis(self) -> Dict:
         """Fallback analysis for schema changes"""

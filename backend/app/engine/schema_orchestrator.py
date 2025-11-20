@@ -4,7 +4,7 @@ Orchestrates analysis of database schema changes
 """
 
 import asyncio
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from datetime import datetime
 import uuid
 import os
@@ -143,7 +143,7 @@ class SchemaChangeOrchestrator:
             final_github_repo_url = github_repo_url or os.getenv("GITHUB_REPO_URL_POSTGRESQL") or repository
             final_github_branch = github_branch or os.getenv("GITHUB_BRANCH", "main")
             
-            code_dependencies = await self._find_code_dependencies(
+            code_dependencies, repo_path = await self._find_code_dependencies(
                 schema_change.table_name,
                 schema_change.column_name,
                 database_type="postgresql",
@@ -178,7 +178,8 @@ class SchemaChangeOrchestrator:
                 ai_insights = await self.ai_analyzer.analyze_schema_impact(
                     schema_change,
                     code_dependencies,
-                    db_relationships
+                    db_relationships,
+                    repository_path=repo_path
                 )
             except Exception as ai_error:
                 print(f"⚠️ AI analysis failed (non-blocking): {ai_error}")
@@ -230,7 +231,7 @@ class SchemaChangeOrchestrator:
         database_type: str = "postgresql",
         github_repo_url: str = None,
         github_branch: str = "main"
-    ) -> List[Dict]:
+    ) -> Tuple[List[Dict], str]:
         """Find all code files that reference this table/column or collection
         
         Args:
@@ -284,7 +285,7 @@ class SchemaChangeOrchestrator:
             
             if not repo_path:
                 print(f"⚠️ Repository path not found. Tried: {possible_paths}")
-                return code_dependencies
+                return code_dependencies, None
         
         print(f"   📁 Using repository path: {repo_path}")
         print(f"   🔍 Database type: {database_type.upper()}")
@@ -382,7 +383,7 @@ class SchemaChangeOrchestrator:
                     print(f"⚠️ Error reading {file_path}: {e}")
                     continue
         
-        return code_dependencies
+        return code_dependencies, repo_path
     
     async def _enhance_schema_change_from_db(
         self,
@@ -972,7 +973,7 @@ class SchemaChangeOrchestrator:
             final_github_repo_url = github_repo_url or os.getenv("GITHUB_REPO_URL_MONGODB") or repository
             final_github_branch = github_branch or os.getenv("GITHUB_BRANCH", "main")
             
-            code_dependencies = await self._find_code_dependencies(
+            code_dependencies, repo_path = await self._find_code_dependencies(
                 mongo_change.collection_name,  # Use collection name as table name for code search
                 mongo_change.field_name,
                 database_type="mongodb",  # Only look for MongoDB patterns, exclude SQL files
@@ -1012,10 +1013,12 @@ class SchemaChangeOrchestrator:
                     new_value=mongo_change.new_value,
                     sql_statement=mongo_change.operation_statement
                 )
+                
                 ai_insights = await self.ai_analyzer.analyze_schema_impact(
                     schema_change_like,
                     code_dependencies,
-                    db_relationships
+                    db_relationships,
+                    repository_path=repo_path
                 )
             except Exception as ai_error:
                 print(f"⚠️ AI analysis failed (non-blocking): {ai_error}")

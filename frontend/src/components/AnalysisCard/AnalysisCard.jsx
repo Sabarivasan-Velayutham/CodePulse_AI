@@ -225,52 +225,105 @@ function AnalysisCard({ analysis }) {
         <Collapse in={expanded} timeout="auto" unmountOnExit>
           <Divider style={{ margin: "1rem 0" }} />
 
-          {/* Risks */}
+          {/* Risks with Recommendations */}
           <Box mb={2}>
             <Typography variant="h6" gutterBottom>
-              ⚠️ Identified Risks
+              ⚠️ Identified Risks & Recommendations
             </Typography>
-            <ul className="risk-list">
-              {analysis.ai_insights.risks.map((risk, index) => (
-                <li key={index}>
-                  <Typography variant="body2">{risk}</Typography>
-                </li>
-              ))}
-            </ul>
+            {analysis.ai_insights.risks && analysis.ai_insights.risks.length > 0 && (
+              <Box>
+                {analysis.ai_insights.risks.map((risk, index) => {
+                  // Get corresponding recommendation (by index)
+                  const recommendation = analysis.ai_insights.recommendations && 
+                    analysis.ai_insights.recommendations[index] 
+                    ? analysis.ai_insights.recommendations[index] 
+                    : null;
+                  
+                  // Handle both string and object formats for risk
+                  let riskTitle = '';
+                  let technicalContext = '';
+                  let businessImpact = '';
+                  let cascadingEffects = '';
+                  
+                  if (typeof risk === 'string') {
+                    riskTitle = risk;
+                  } else if (typeof risk === 'object' && risk !== null) {
+                    riskTitle = risk.risk || risk.risk_description || risk.title || 'Risk';
+                    technicalContext = risk.technical_context || risk.technical || '';
+                    businessImpact = risk.business_impact || risk.business || '';
+                    cascadingEffects = risk.cascading_effects || risk.cascading || '';
+                  }
+                  
+                  // Handle recommendation format
+                  let recommendationText = '';
+                  if (recommendation) {
+                    if (typeof recommendation === 'string') {
+                      recommendationText = recommendation;
+                    } else if (typeof recommendation === 'object' && recommendation !== null) {
+                      recommendationText = recommendation.recommendation || recommendation.action || 
+                        recommendation.suggestion || recommendation.text || '';
+                    }
+                  }
+                  
+                  return (
+                    <Box key={index} mb={3} p={2} sx={{ border: '1px solid #e0e0e0', borderRadius: 1, backgroundColor: '#fafafa' }}>
+                      <Typography variant="subtitle1" gutterBottom style={{ fontWeight: 'bold', color: '#d32f2f' }}>
+                        Risk {index + 1}: {riskTitle}
+                      </Typography>
+                      
+                      {technicalContext && (
+                        <Box mt={1} mb={1}>
+                          <Typography variant="body2" component="div">
+                            <strong style={{ color: '#1976d2' }}>Technical:</strong>
+                            <Typography variant="body2" component="span" style={{ marginLeft: '0.5rem' }}>
+                              {technicalContext}
+                            </Typography>
+                          </Typography>
+                        </Box>
+                      )}
+                      
+                      {businessImpact && (
+                        <Box mt={1} mb={1}>
+                          <Typography variant="body2" component="div">
+                            <strong style={{ color: '#1976d2' }}>Business Impact:</strong>
+                            <Typography variant="body2" component="span" style={{ marginLeft: '0.5rem' }}>
+                              {businessImpact}
+                            </Typography>
+                          </Typography>
+                        </Box>
+                      )}
+                      
+                      {cascadingEffects && (
+                        <Box mt={1} mb={1}>
+                          <Typography variant="body2" component="div">
+                            <strong style={{ color: '#1976d2' }}>Cascading Effects:</strong>
+                            <Typography variant="body2" component="span" style={{ marginLeft: '0.5rem' }}>
+                              {cascadingEffects}
+                            </Typography>
+                          </Typography>
+                        </Box>
+                      )}
+                      
+                      {recommendationText && (
+                        <Box mt={2} p={1.5} sx={{ backgroundColor: '#e8f5e9', borderRadius: 1, borderLeft: '3px solid #4caf50' }}>
+                          <Typography variant="body2" component="div">
+                            <strong style={{ color: '#2e7d32' }}>💡 Recommendation:</strong>
+                            <Typography variant="body2" component="span" style={{ marginLeft: '0.5rem' }}>
+                              {recommendationText}
+                            </Typography>
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
           </Box>
 
           <Box mt={3}>
             <RiskScore riskScore={analysis.risk_score} />
           </Box>
-
-          {/* Regulatory Concerns */}
-          {/* {analysis.ai_insights.regulatory_concerns && (
-            <Box mb={2}>
-              <Typography variant="h6" gutterBottom>
-                📋 Regulatory Concerns
-              </Typography>
-              <Typography variant="body2">
-                {analysis.ai_insights.regulatory_concerns}
-              </Typography>
-            </Box>
-          )} */}
-
-          {/* Recommendations */}
-          {analysis.ai_insights.recommendations &&
-            analysis.ai_insights.recommendations.length > 0 && (
-              <Box mb={2}>
-                <Typography variant="h6" gutterBottom>
-                  💡 Recommendations
-                </Typography>
-                <ul className="recommendation-list">
-                  {analysis.ai_insights.recommendations.map((rec, index) => (
-                    <li key={index}>
-                      <Typography variant="body2">{rec}</Typography>
-                    </li>
-                  ))}
-                </ul>
-              </Box>
-            )}
 
           {/* Schema Change Details */}
           {analysis.type === "schema_change" && (() => {

@@ -66,8 +66,22 @@ class AnalysisOrchestrator:
             # Step 3: AI Analysis (non-blocking - continue even if it fails)
             print("Step 4/6: Running AI analysis...")
             try:
+                # Get repository path for code snippet extraction
+                import os
+                repo_path = None
+                possible_paths = [
+                    "/sample-repo",
+                    os.path.join(os.getcwd(), "sample-repo"),
+                    os.path.join("/app", "sample-repo"),
+                    "sample-repo"
+                ]
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        repo_path = path
+                        break
+                
                 ai_insights = await self.ai_analyzer.analyze_impact(
-                    file_path, code_diff, dependencies, database_dependencies
+                    file_path, code_diff, dependencies, database_dependencies, repository_path=repo_path
                 )
             except Exception as ai_error:
                 print(f"⚠️ AI analysis failed (non-blocking): {ai_error}")
