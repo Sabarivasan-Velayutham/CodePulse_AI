@@ -44,6 +44,9 @@ public class AccountController {
      * PUT /api/accounts/{id}
      * 
      * Request body: { name, email, balance }
+     * 
+     * NOTE: This endpoint is NOT used by any consumer repository
+     * Scenario 6 tests breaking change: making email field optional (previously required)
      */
     @PutMapping("/{id}")
     public ResponseEntity<?> updateAccount(
@@ -51,6 +54,8 @@ public class AccountController {
         @RequestBody Map<String, Object> request
     ) {
         // Updates account details
+        // Current: Required fields - name, email
+        // After Scenario 6: Required fields - name only (email optional) (BREAKING, but no consumers)
         return ResponseEntity.ok().build();
     }
     

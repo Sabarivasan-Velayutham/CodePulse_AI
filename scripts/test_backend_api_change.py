@@ -23,112 +23,123 @@ def test_api_contract_change(scenario=1):
     print("=" * 60)
     
     # Multiple test scenarios
+    # Scenario 1: WITH consumer impact (used by consumer repos)
+    # Scenarios 2-4: WITHOUT consumer impact (not used by any repo)
     scenarios = {
+        # ============================================================
+        # SCENARIOS WITH CONSUMER IMPACT (Used by consumer repos)
+        # ============================================================
+        
         1: {
-            "name": "Breaking Change: Add Required Parameter",
+            "name": "[WITH IMPACT] Breaking Change: Add Required Parameter to POST /api/auctions/{id}/bid",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/AuctionController.java",
+            "repository": "backend-api-service",
+            "diff": """
+-    @PostMapping("/{id}/bid")
+-    public ResponseEntity<?> placeBid(
+-        @PathVariable String id,
+-        @RequestBody Map<String, Object> request
+-    ) {
+-        // Places a bid on an auction
+-        // Required fields: bidAmount, bidderId
+-        return ResponseEntity.ok().build();
+-    }
++    @PostMapping("/{id}/bid")
++    public ResponseEntity<?> placeBid(
++        @PathVariable String id,
++        @RequestBody Map<String, Object> request,
++        @RequestParam String paymentMethod
++    ) {
++        // Places a bid on an auction
++        // Required fields: bidAmount, bidderId, paymentMethod
++        return ResponseEntity.ok().build();
++    }
+            """,
+            "commit_sha": "test_with_impact_002",
+            "commit_message": "Added required paymentMethod parameter to placeBid endpoint",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service",
+            "expected_consumers": "auctioneer (uses this endpoint for bidding)"
+        },       
+        # ============================================================
+        # SCENARIOS WITHOUT CONSUMER IMPACT (Not used by any repo)
+        # ============================================================
+        2: {
+            "name": "[NO IMPACT] Breaking Change: Add Required Parameter to POST /api/stocks/buy",
             "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
             "repository": "backend-api-service",
             "diff": """
 -    @PostMapping("/buy")
--    public ResponseEntity<String> buyStock(@RequestParam String symbol, @RequestParam int quantity,@RequestParam String number) {
--        try {
--            transactionService.buyStock(symbol, quantity,number);
--            return ResponseEntity.ok("Stock purchased successfully.");
--        } catch (IllegalArgumentException e) {
--            return ResponseEntity.badRequest().body(e.getMessage());
--        }
--    }
-+    @PostMapping("/buy")
-+    public ResponseEntity<String> buyStock(@RequestParam String symbol, @RequestParam int quantity, @RequestParam String number, @RequestParam String accountId) {
-+        try {
-+            transactionService.buyStock(symbol, quantity, number, accountId);
-+            return ResponseEntity.ok("Stock purchased successfully.");
-+        } catch (IllegalArgumentException e) {
-+            return ResponseEntity.badRequest().body(e.getMessage());
-+        }
-+    }
-            """,
-            "commit_sha": "test_breaking_change_001",
-            "commit_message": "BREAKING: Added required accountId parameter to buyStock endpoint",
-            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
-        },
-        2: {
-            "name": "Breaking Change: Remove Endpoint",
-            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
-            "repository": "backend-api-service",
-            "diff": """
--    @PostMapping("/sell")
--    public ResponseEntity<?> sellStock(@RequestBody Map<String, Object> request) {
--        // Processes stock sale
+-    public ResponseEntity<?> buyStock(@RequestBody Map<String, Object> request) {
+-        // Processes stock purchase
 -        // Required fields: stockId, quantity, accountId
 -        return ResponseEntity.ok().build();
 -    }
--
++    @PostMapping("/buy")
++    public ResponseEntity<?> buyStock(
++        @RequestBody Map<String, Object> request,
++        @RequestParam String verificationCode
++    ) {
++        // Processes stock purchase
++        // Required fields: stockId, quantity, accountId, verificationCode (NEW - BREAKING)
++        return ResponseEntity.ok().build();
++    }
             """,
-            "commit_sha": "test_breaking_change_002",
-            "commit_message": "BREAKING: Removed /api/stocks/sell endpoint",
-            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+            "commit_sha": "test_no_impact_001",
+            "commit_message": "Added required verificationCode parameter to buyStock endpoint",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service",
+            "expected_consumers": "None (endpoint not used by any consumer repo)"
         },
         3: {
-            "name": "Breaking Change: Change Endpoint Path",
-            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "name": "[NO IMPACT] Breaking Change: Change GET /api/transactions/account/{accountId} Path",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/TransactionController.java",
             "repository": "backend-api-service",
             "diff": """
--    @GetMapping("/{id}/price")
--    public ResponseEntity<?> getStockPrice(@PathVariable String id) {
--        // Returns current stock price
+-    @GetMapping("/account/{accountId}")
+-    public ResponseEntity<?> getTransactionsByAccount(@PathVariable String accountId) {
+-        // Returns all transactions for a specific account
 -        return ResponseEntity.ok().build();
 -    }
-+    @GetMapping("/{id}/current-price")
-+    public ResponseEntity<?> getStockPrice(@PathVariable String id) {
-+        // Returns current stock price
++    @GetMapping("/by-account/{accountId}")
++    public ResponseEntity<?> getTransactionsByAccount(@PathVariable String accountId) {
++        // Returns all transactions for a specific account
++        // BREAKING: Path changed from /account/{accountId} to /by-account/{accountId}
 +        return ResponseEntity.ok().build();
 +    }
             """,
-            "commit_sha": "test_breaking_change_003",
-            "commit_message": "BREAKING: Changed endpoint path from /{id}/price to /{id}/current-price",
-            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+            "commit_sha": "test_no_impact_002",
+            "commit_message": "Changed endpoint path from /account/{accountId} to /by-account/{accountId}",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service",
+            "expected_consumers": "None (endpoint not used by any consumer repo)"
         },
         4: {
-            "name": "Non-Breaking: Add Optional Parameter",
-            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "name": "[NO IMPACT] Breaking Change: Remove Required Field from PUT /api/accounts/{id}",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/AccountController.java",
             "repository": "backend-api-service",
             "diff": """
--    @GetMapping("/{id}")
--    public ResponseEntity<?> getStockById(@PathVariable String id) {
--        // Returns stock details by ID
+-    @PutMapping("/{id}")
+-    public ResponseEntity<?> updateAccount(
+-        @PathVariable String id,
+-        @RequestBody Map<String, Object> request
+-    ) {
+-        // Updates account details
 -        return ResponseEntity.ok().build();
 -    }
-+    @GetMapping("/{id}")
-+    public ResponseEntity<?> getStockById(@PathVariable String id, @RequestParam(required = false) String format) {
-+        // Returns stock details by ID
-+        // format is optional: 'json' or 'xml'
++    @PutMapping("/{id}")
++    public ResponseEntity<?> updateAccount(
++        @PathVariable String id,
++        @RequestBody Map<String, Object> request
++    ) {
++        // Updates account details
++        // BREAKING: Removed 'email' field requirement - now optional
++        // Previously required: name, email
++        // Now required: name only
 +        return ResponseEntity.ok().build();
 +    }
             """,
-            "commit_sha": "test_non_breaking_001",
-            "commit_message": "FEATURE: Added optional format parameter to getStockById endpoint",
-            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
-        },
-        5: {
-            "name": "Breaking Change: Change Response Type",
-            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
-            "repository": "backend-api-service",
-            "diff": """
--    @GetMapping
--    public ResponseEntity<?> getAllStocks() {
--        // Returns list of all stocks
--        return ResponseEntity.ok().build();
--    }
-+    @GetMapping
-+    public ResponseEntity<StockListResponse> getAllStocks() {
-+        // Returns paginated list of all stocks with metadata
-+        return ResponseEntity.ok().build();
-+    }
-            """,
-            "commit_sha": "test_breaking_change_004",
-            "commit_message": "BREAKING: Changed response type from generic to StockListResponse",
-            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+            "commit_sha": "test_no_impact_003",
+            "commit_message": "Made email field optional in updateAccount endpoint (previously required)",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service",
+            "expected_consumers": "None (endpoint not used by any consumer repo)"
         }
     }
     
@@ -142,6 +153,8 @@ def test_api_contract_change(scenario=1):
     print(f"\n[SCENARIO] {scenario_name}")
     print(f"   File: {test_data['file_path']}")
     print(f"   Expected: System should search all 3 consumer repos")
+    if 'expected_consumers' in test_data:
+        print(f"   Expected Consumers: {test_data.get('expected_consumers', 'N/A')}")
     
     
     try:
@@ -220,8 +233,8 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='Test API contract change detection')
-    parser.add_argument('--scenario', type=int, default=1, choices=[1, 2, 3, 4, 5],
-                        help='Test scenario (1-5). Default: 1')
+    parser.add_argument('--scenario', type=int, default=1, choices=[1, 2, 3, 4],
+                        help='Test scenario (1-4). Default: 1')
     parser.add_argument('--all', action='store_true',
                         help='Run all test scenarios')
     
@@ -232,9 +245,9 @@ if __name__ == "__main__":
         print("Running All Test Scenarios")
         print("=" * 60)
         all_success = True
-        for i in range(1, 6):
+        for i in range(1, 5):
             print(f"\n{'='*60}")
-            print(f"SCENARIO {i}/5")
+            print(f"SCENARIO {i}/4")
             print(f"{'='*60}")
             success = test_api_contract_change(i)
             if not success:
@@ -244,4 +257,3 @@ if __name__ == "__main__":
     else:
         success = test_api_contract_change(args.scenario)
         sys.exit(0 if success else 1)
-

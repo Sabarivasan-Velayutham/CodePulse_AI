@@ -28,7 +28,7 @@ function App() {
     <div className="App">
       <header className="App-header">
         <div className="header-content">
-          <h1>🚀 CodeFlow Catalyst</h1>
+          <h1>🚀 CodePulse AI</h1>
           <p>AI-Powered Impact Analysis for Banking Applications</p>
           <div className="status-indicator">
             {loading ? (

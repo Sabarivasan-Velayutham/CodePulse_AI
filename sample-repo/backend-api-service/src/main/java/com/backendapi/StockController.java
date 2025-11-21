@@ -19,10 +19,15 @@ public class StockController {
     /**
      * Get all stocks
      * GET /api/stocks
+     * 
+     * NOTE: This endpoint is used by Stocks_Portfolio_Management (Portfolio.js)
+     * Scenario 1 tests breaking change: response changed from array to StockListResponse object
      */
     @GetMapping
     public ResponseEntity<?> getAllStocks() {
         // Returns list of all stocks
+        // Current: Returns array
+        // After Scenario 1: Will return StockListResponse (paginated object)
         return ResponseEntity.ok().build();
     }
     
@@ -41,11 +46,15 @@ public class StockController {
      * POST /api/stocks/buy
      * 
      * Request body: { stockId, quantity, accountId }
+     * 
+     * NOTE: This endpoint is NOT used by any consumer repository
+     * Scenario 4 tests breaking change: adding required verificationCode parameter (no impact expected)
      */
     @PostMapping("/buy")
     public ResponseEntity<?> buyStock(@RequestBody Map<String, Object> request) {
         // Processes stock purchase
         // Required fields: stockId, quantity, accountId
+        // After Scenario 4: Will require verificationCode parameter (BREAKING, but no consumers)
         return ResponseEntity.ok().build();
     }
     

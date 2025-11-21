@@ -52,10 +52,15 @@ public class TransactionController {
     /**
      * Get transactions by account
      * GET /api/transactions/account/{accountId}
+     * 
+     * NOTE: This endpoint is NOT used by any consumer repository
+     * Scenario 5 tests breaking change: path changed from /account/{accountId} to /by-account/{accountId}
      */
     @GetMapping("/account/{accountId}")
     public ResponseEntity<?> getTransactionsByAccount(@PathVariable String accountId) {
         // Returns all transactions for a specific account
+        // Current path: /account/{accountId}
+        // After Scenario 5: Path will be /by-account/{accountId} (BREAKING, but no consumers)
         return ResponseEntity.ok().build();
     }
 }

@@ -103,6 +103,7 @@ async def get_api_contract_graph(analysis_id: str):
         raise HTTPException(status_code=404, detail="Analysis is not an API contract analysis")
     
     # Build graph from API contracts and consumers
+    # Only include endpoints that have consumers or are breaking changes
     nodes = []
     links = []
     nodes_map = {}
@@ -110,12 +111,31 @@ async def get_api_contract_graph(analysis_id: str):
     api_changes = result.get("api_changes", [])
     consumers = result.get("consumers", {})
     
-    # Add API endpoint nodes
+    # First pass: Only add API endpoints that have consumers or are breaking
+    endpoints_to_show = set()
     for change in api_changes:
         endpoint = change.get("endpoint", "")
         method = change.get("method", "GET")
         change_type = change.get("change_type", "ADDED")
         api_key = f"{method} {endpoint}"
+        
+        # Include if it has consumers or is a breaking change
+        has_consumers = api_key in consumers and len(consumers.get(api_key, [])) > 0
+        is_breaking = change_type == "BREAKING"
+        
+        if has_consumers or is_breaking:
+            endpoints_to_show.add(api_key)
+    
+    # Second pass: Add nodes and links only for endpoints to show
+    for change in api_changes:
+        endpoint = change.get("endpoint", "")
+        method = change.get("method", "GET")
+        change_type = change.get("change_type", "ADDED")
+        api_key = f"{method} {endpoint}"
+        
+        # Skip if this endpoint shouldn't be shown
+        if api_key not in endpoints_to_show:
+            continue
         
         # Determine risk color based on change type
         if change_type == "BREAKING":

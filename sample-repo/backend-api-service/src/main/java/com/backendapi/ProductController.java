@@ -17,10 +17,15 @@ public class ProductController {
     /**
      * Get all products
      * GET /api/products
+     * 
+     * NOTE: This endpoint is used by MobileStore_Project repository
+     * Scenario 3 tests breaking change: response changed from array to ProductListResponse object
      */
     @GetMapping
     public ResponseEntity<?> getAllProducts() {
         // Returns list of all products
+        // Current: Returns array
+        // After Scenario 3: Will return ProductListResponse (paginated object)
         return ResponseEntity.ok().build();
     }
     

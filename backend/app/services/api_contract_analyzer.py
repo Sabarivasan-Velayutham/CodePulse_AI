@@ -184,6 +184,7 @@ class APIContractAnalyzer:
         Examples:
         - /api/stocks/{id}/price vs /api/stocks/{id}/current-price -> True
         - /api/stocks/{id} vs /api/stocks/{id}/price -> False (different structure)
+        - /api/transactions/account/{accountId} vs /api/transactions/by-account/{accountId} -> True
         """
         # Normalize paths (remove leading/trailing slashes, convert to lowercase)
         p1 = path1.strip('/').lower()
@@ -204,7 +205,11 @@ class APIContractAnalyzer:
         # Count differences
         differences = 0
         for s1, s2 in zip(segments1, segments2):
-            if s1 != s2:
+            # Normalize path variables {id} -> {id}
+            s1_norm = re.sub(r'\{[^}]+\}', '{}', s1)
+            s2_norm = re.sub(r'\{[^}]+\}', '{}', s2)
+            
+            if s1_norm != s2_norm:
                 differences += 1
                 # If more than one segment differs, probably not a simple path change
                 if differences > 1:

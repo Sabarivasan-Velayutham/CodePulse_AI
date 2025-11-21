@@ -52,6 +52,9 @@ public class AuctionController {
      * POST /api/auctions/{id}/bid
      * 
      * Request body: { bidAmount, bidderId }
+     * 
+     * NOTE: This endpoint is used by auctioneer repository
+     * Scenario 2 tests breaking change: adding required paymentMethod parameter
      */
     @PostMapping("/{id}/bid")
     public ResponseEntity<?> placeBid(
@@ -60,6 +63,7 @@ public class AuctionController {
     ) {
         // Places a bid on an auction
         // Required fields: bidAmount, bidderId
+        // After Scenario 2: Will require paymentMethod parameter (BREAKING)
         return ResponseEntity.ok().build();
     }
 }
