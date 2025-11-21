@@ -85,3 +85,86 @@ async def get_api_consumers(endpoint: str, method: str = "GET"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/api/contract/graph/{analysis_id}")
+async def get_api_contract_graph(analysis_id: str):
+    """
+    Get dependency graph for API contract changes
+    Shows API endpoints and their consumers
+    """
+    from urllib.parse import unquote
+    
+    if analysis_id not in analysis_results:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    
+    result = analysis_results[analysis_id]
+    
+    if result.get("type") != "api_contract_change":
+        raise HTTPException(status_code=404, detail="Analysis is not an API contract analysis")
+    
+    # Build graph from API contracts and consumers
+    nodes = []
+    links = []
+    nodes_map = {}
+    
+    api_changes = result.get("api_changes", [])
+    consumers = result.get("consumers", {})
+    
+    # Add API endpoint nodes
+    for change in api_changes:
+        endpoint = change.get("endpoint", "")
+        method = change.get("method", "GET")
+        change_type = change.get("change_type", "ADDED")
+        api_key = f"{method} {endpoint}"
+        
+        # Determine risk color based on change type
+        if change_type == "BREAKING":
+            risk = "critical"
+        elif change_type == "MODIFIED":
+            risk = "high"
+        else:
+            risk = "low"
+        
+        node_id = f"api:{api_key}"
+        if node_id not in nodes_map:
+            nodes_map[node_id] = {
+                "id": node_id,
+                "name": f"{method} {endpoint}",
+                "type": "api_endpoint",
+                "risk": risk,
+                "change_type": change_type
+            }
+            nodes.append(nodes_map[node_id])
+        
+        # Add consumer nodes and links
+        consumer_list = consumers.get(api_key, [])
+        for consumer in consumer_list:
+            file_path = consumer.get("file_path", "")
+            if not file_path:
+                continue
+            
+            consumer_id = f"consumer:{file_path}"
+            if consumer_id not in nodes_map:
+                nodes_map[consumer_id] = {
+                    "id": consumer_id,
+                    "name": file_path.split("/")[-1],  # Just filename
+                    "type": "consumer",
+                    "risk": "medium",
+                    "path": file_path,
+                    "repository": consumer.get("source_repo", consumer.get("repository", "unknown"))
+                }
+                nodes.append(nodes_map[consumer_id])
+            
+            # Create link from consumer to API
+            links.append({
+                "source": consumer_id,
+                "target": node_id,
+                "type": "consumes",
+                "line_number": consumer.get("line_number", 0)
+            })
+    
+    return {
+        "nodes": nodes,
+        "links": links
+    }
+

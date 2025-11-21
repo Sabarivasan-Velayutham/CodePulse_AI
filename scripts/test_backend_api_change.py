@@ -15,19 +15,20 @@ if sys.platform == 'win32':
 # Backend API URL
 API_URL = "http://localhost:8000/api/v1/api/contract/analyze"
 
-def test_api_contract_change():
+def test_api_contract_change(scenario=1):
     """Test API contract change detection with cross-repo consumer discovery"""
     
     print("=" * 60)
     print("Testing Backend API Service Change")
     print("=" * 60)
     
-    # Simulate a breaking change: Add required parameter to buyStock endpoint
-    # Using actual GitHub repository
-    test_data = {
-        "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
-        "repository": "backend-api-service",
-        "diff": """
+    # Multiple test scenarios
+    scenarios = {
+        1: {
+            "name": "Breaking Change: Add Required Parameter",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "repository": "backend-api-service",
+            "diff": """
 -    @PostMapping("/buy")
 -    public ResponseEntity<String> buyStock(@RequestParam String symbol, @RequestParam int quantity,@RequestParam String number) {
 -        try {
@@ -46,16 +47,102 @@ def test_api_contract_change():
 +            return ResponseEntity.badRequest().body(e.getMessage());
 +        }
 +    }
-        """,
-        "commit_sha": "test_breaking_change_001",
-        "commit_message": "BREAKING: Added required accountId parameter to buyStock endpoint",
-        "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+            """,
+            "commit_sha": "test_breaking_change_001",
+            "commit_message": "BREAKING: Added required accountId parameter to buyStock endpoint",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+        },
+        2: {
+            "name": "Breaking Change: Remove Endpoint",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "repository": "backend-api-service",
+            "diff": """
+-    @PostMapping("/sell")
+-    public ResponseEntity<?> sellStock(@RequestBody Map<String, Object> request) {
+-        // Processes stock sale
+-        // Required fields: stockId, quantity, accountId
+-        return ResponseEntity.ok().build();
+-    }
+-
+            """,
+            "commit_sha": "test_breaking_change_002",
+            "commit_message": "BREAKING: Removed /api/stocks/sell endpoint",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+        },
+        3: {
+            "name": "Breaking Change: Change Endpoint Path",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "repository": "backend-api-service",
+            "diff": """
+-    @GetMapping("/{id}/price")
+-    public ResponseEntity<?> getStockPrice(@PathVariable String id) {
+-        // Returns current stock price
+-        return ResponseEntity.ok().build();
+-    }
++    @GetMapping("/{id}/current-price")
++    public ResponseEntity<?> getStockPrice(@PathVariable String id) {
++        // Returns current stock price
++        return ResponseEntity.ok().build();
++    }
+            """,
+            "commit_sha": "test_breaking_change_003",
+            "commit_message": "BREAKING: Changed endpoint path from /{id}/price to /{id}/current-price",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+        },
+        4: {
+            "name": "Non-Breaking: Add Optional Parameter",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "repository": "backend-api-service",
+            "diff": """
+-    @GetMapping("/{id}")
+-    public ResponseEntity<?> getStockById(@PathVariable String id) {
+-        // Returns stock details by ID
+-        return ResponseEntity.ok().build();
+-    }
++    @GetMapping("/{id}")
++    public ResponseEntity<?> getStockById(@PathVariable String id, @RequestParam(required = false) String format) {
++        // Returns stock details by ID
++        // format is optional: 'json' or 'xml'
++        return ResponseEntity.ok().build();
++    }
+            """,
+            "commit_sha": "test_non_breaking_001",
+            "commit_message": "FEATURE: Added optional format parameter to getStockById endpoint",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+        },
+        5: {
+            "name": "Breaking Change: Change Response Type",
+            "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+            "repository": "backend-api-service",
+            "diff": """
+-    @GetMapping
+-    public ResponseEntity<?> getAllStocks() {
+-        // Returns list of all stocks
+-        return ResponseEntity.ok().build();
+-    }
++    @GetMapping
++    public ResponseEntity<StockListResponse> getAllStocks() {
++        // Returns paginated list of all stocks with metadata
++        return ResponseEntity.ok().build();
++    }
+            """,
+            "commit_sha": "test_breaking_change_004",
+            "commit_message": "BREAKING: Changed response type from generic to StockListResponse",
+            "github_repo_url": "https://github.com/Sabarivasan-Velayutham/backend-api-service"
+        }
     }
     
-    print("\n[>] Sending API contract analysis request...")
+    # Get selected scenario
+    if scenario not in scenarios:
+        scenario = 1
+    
+    test_data = scenarios[scenario]
+    scenario_name = test_data.pop("name")
+    
+    print(f"\n[SCENARIO] {scenario_name}")
     print(f"   File: {test_data['file_path']}")
-    print(f"   Change: Added required 'accountId' parameter to POST /api/stocks/buy")
     print(f"   Expected: System should search all 3 consumer repos")
+    
     
     try:
         response = requests.post(API_URL, json=test_data, timeout=120)
@@ -130,6 +217,31 @@ def test_api_contract_change():
         return False
 
 if __name__ == "__main__":
-    success = test_api_contract_change()
-    sys.exit(0 if success else 1)
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Test API contract change detection')
+    parser.add_argument('--scenario', type=int, default=1, choices=[1, 2, 3, 4, 5],
+                        help='Test scenario (1-5). Default: 1')
+    parser.add_argument('--all', action='store_true',
+                        help='Run all test scenarios')
+    
+    args = parser.parse_args()
+    
+    if args.all:
+        print("=" * 60)
+        print("Running All Test Scenarios")
+        print("=" * 60)
+        all_success = True
+        for i in range(1, 6):
+            print(f"\n{'='*60}")
+            print(f"SCENARIO {i}/5")
+            print(f"{'='*60}")
+            success = test_api_contract_change(i)
+            if not success:
+                all_success = False
+            print("\n" + "-" * 60)
+        sys.exit(0 if all_success else 1)
+    else:
+        success = test_api_contract_change(args.scenario)
+        sys.exit(0 if success else 1)
 

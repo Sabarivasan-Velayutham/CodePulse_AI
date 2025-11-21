@@ -15,6 +15,12 @@
   │  Webhooks   │     │   Backend    │     │   Analyzer  │
   └─────────────┘     └──────────────┘     └─────────────┘
                               │                     │
+                              │             ┌─────────────┐
+                              └────────────▶│   API       │
+                                            │  Contract   │
+                                            │  Analyzer   │
+                                            └─────────────┘
+                              │                     │
                               ▼                     ▼
                        ┌──────────────┐     ┌─────────────┐
                        │  PostgreSQL │     │   Neo4j     │
@@ -47,9 +53,10 @@
 
 ### Key Points (Bullet Format):
 - **Real-time Detection**: Automatic schema change detection via PostgreSQL event triggers & MongoDB Change Streams
+- **API Contract Analysis**: Detects breaking changes in REST/GraphQL/gRPC APIs with cross-repository consumer discovery
 - **Multi-Database Support**: PostgreSQL (SQL) and MongoDB (NoSQL) schema analysis
 - **AI-Powered Analysis**: Google Gemini 1.5 Flash for intelligent impact assessment
-- **Dependency Graph**: Neo4j stores code-to-code and code-to-database relationships
+- **Dependency Graph**: Neo4j stores code-to-code, code-to-database, and API-to-consumer relationships
 - **Risk Scoring**: Multi-factor algorithm (Technical, Domain, AI, Temporal risks)
 - **Interactive Visualization**: D3.js dependency graphs with risk heatmaps
 
@@ -69,14 +76,17 @@
 ### Visual Layout:
 **Left Column: Problem Statement**
 - Schema changes break production systems
+- API contract changes break microservices without warning
+- Backend teams don't know which services consume their APIs
 - Manual impact analysis is time-consuming and error-prone
 - Missing dependencies lead to deployment failures
-- No unified view of code and database relationships
+- No unified view of code, database, and API relationships
 
 **Right Column: Our Solution**
-- **Automatic Detection**: Zero-config schema change monitoring
+- **Automatic Detection**: Zero-config schema and API contract change monitoring
+- **Cross-Repository Discovery**: Finds API consumers across multiple repositories and teams
 - **Multi-Layer Analysis**: Parser-based (fast) + AI-based (intelligent)
-- **Graph-Based Dependencies**: Neo4j captures complex relationships
+- **Graph-Based Dependencies**: Neo4j captures complex relationships (code, database, API)
 - **Real-time Risk Assessment**: Immediate feedback on change impact
 
 ### Center Section: **Analysis Pipeline**
@@ -84,31 +94,43 @@
 ```
 1. Change Detection
    ├─ PostgreSQL: Event Triggers → pg_notify
-   └─ MongoDB: Change Streams → Real-time notifications
+   ├─ MongoDB: Change Streams → Real-time notifications
+   └─ API Contracts: GitHub webhooks → API endpoint extraction
 
 2. Dependency Extraction
    ├─ Code Parsing: SQL queries, ORM patterns, heuristics
+   ├─ API Extraction: Spring Boot, Flask, FastAPI, Express.js
    ├─ Database Relationships: Foreign keys, views, references
+   ├─ Consumer Discovery: Cross-repository API consumer search
    └─ Graph Storage: Neo4j relationship mapping
 
-3. AI Impact Analysis
+3. Breaking Change Detection
+   ├─ API Contracts: Removed endpoints, changed parameters, response types
+   ├─ Commit Message Analysis: "BREAKING" keyword detection
+   ├─ Diff Reconstruction: "Before" state from git diffs
+   └─ Consumer Impact: Count affected services and frontends
+
+4. AI Impact Analysis
    ├─ Context Understanding: Code semantics & business logic
    ├─ Risk Identification: Security, performance, compliance
    └─ Recommendations: Actionable deployment advice
 
-4. Risk Scoring
+5. Risk Scoring
    ├─ Technical Risk (0-4): Dependency depth, code complexity
    ├─ Domain Risk (0-3): Critical tables, business impact
    ├─ AI Risk (0-2): AI-identified concerns
-   └─ Temporal Risk (multiplier): Time-based factors
+   └─ Breaking Changes: Consumer count multiplier
 
-5. Visualization
+6. Visualization
    └─ Interactive graph with risk heatmaps & drill-down
 ```
 
 ### Key Innovations:
 - **Minimal Information Analysis**: Works with incomplete SQL (PostgreSQL trigger limitation)
 - **Database-Agnostic**: Unified analysis for SQL and NoSQL
+- **API Contract Detection**: Multi-framework support (Spring Boot, Flask, FastAPI, Express)
+- **Cross-Repository Consumer Discovery**: Finds API consumers across different teams and repositories
+- **Diff-Based Comparison**: Reconstructs "before" state from git diffs for breaking change detection
 - **Hybrid Parser+AI**: Fast parsing for 95% cases, AI for complex scenarios
 - **Real-time Notifications**: Event-driven architecture (no polling)
 
@@ -123,11 +145,12 @@
 
 | Feature | Description | Impact |
 |---------|-------------|--------|
-| **Automatic Detection** | Zero-config monitoring for PostgreSQL & MongoDB | Saves 80% manual effort |
+| **Automatic Detection** | Zero-config monitoring for PostgreSQL, MongoDB & API contracts | Saves 80% manual effort |
 | **Multi-Database Support** | Unified analysis for SQL & NoSQL | Covers 100% of database types |
+| **API Contract Analysis** | Cross-repository consumer discovery & breaking change detection | Prevents microservice failures |
 | **AI-Powered Insights** | Context-aware risk assessment | Identifies 40% more risks than static analysis |
 | **Real-time Visualization** | Interactive dependency graphs | Instant understanding of impact |
-| **Risk Scoring** | 4-factor algorithm (0-10 scale) | Prioritizes critical changes |
+| **Risk Scoring** | Multi-factor algorithm (0-10 scale) | Prioritizes critical changes |
 
 **Middle Section: Use Cases Demonstrated**
 
@@ -149,11 +172,19 @@
    - Risk Score: 9.2/10 (CRITICAL) - Financial calculation change
    - AI Insight: "Fee calculation change affects all payment processing workflows"
 
+4. **API Contract Change (Breaking)**
+   - `POST /api/stocks/buy` - Added required `accountId` parameter
+   - Detected: 3 consumers across 3 repositories (Stocks_Portfolio_Management, auctioneer, MobileStore_Project)
+   - Breaking Changes: 1 (required parameter addition)
+   - Risk Score: 6.5/10 (HIGH) - Breaking change with multiple consumers
+   - AI Insight: "Adding required parameter will break existing consumers. Recommend API versioning or make parameter optional temporarily."
+
 **Bottom Section: Outcomes & Metrics**
 
 - ✅ **Zero False Positives**: Accurate dependency detection via multi-layer analysis
-- ✅ **Sub-second Detection**: Real-time schema change notifications
-- ✅ **Comprehensive Coverage**: Code + Database + AI insights in one platform
+- ✅ **Sub-second Detection**: Real-time schema and API contract change notifications
+- ✅ **Cross-Repository Discovery**: Finds API consumers across different teams and repositories
+- ✅ **Comprehensive Coverage**: Code + Database + API Contracts + AI insights in one platform
 - ✅ **Production-Ready**: Dockerized, scalable architecture
 - ✅ **Developer-Friendly**: Interactive UI with actionable recommendations
 
@@ -210,4 +241,13 @@ A: Multi-factor approach: Technical (dependency depth), Domain (table criticalit
 
 **Q: Can it scale to large codebases?**
 A: Yes - DEPENDS tool handles large codebases efficiently, Neo4j scales horizontally, and we use background processing for analysis.
+
+**Q: How does API contract change detection work?**
+A: We extract API endpoints from code (Spring Boot, Flask, FastAPI, Express), compare before/after states from git diffs, detect breaking changes (removed endpoints, changed parameters, response types), and search across multiple repositories to find all consumers. The system uses both local cloning and GitHub API search for flexibility.
+
+**Q: How do you find API consumers across different repositories?**
+A: We support two methods: (1) Local cloning - clones configured consumer repositories and searches locally (more thorough), (2) GitHub API search - searches directly via GitHub API without cloning (faster, but requires API token for higher rate limits). Both methods find consumers and provide file paths and line numbers.
+
+**Q: What makes your breaking change detection accurate?**
+A: Multi-layered approach: (1) Diff-based comparison reconstructs "before" state from git diffs, (2) Commit message analysis detects "BREAKING" keywords, (3) Consumer presence indicates existing endpoints (not new), (4) Parameter and response type analysis detects contract changes, (5) AI analysis provides semantic understanding of impact.
 

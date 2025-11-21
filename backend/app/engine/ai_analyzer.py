@@ -353,39 +353,100 @@ Use the code snippets above to understand how this change affects related files 
     def _parse_ai_response(self, response_text: str) -> Dict:
         """Parse AI response text to structured data"""
         try:
-            # --- AI FIX: Find the JSON block more reliably ---
-            # Find the start of the JSON
-            start = response_text.find("{")
+            # Remove markdown code blocks if present
+            # Handle ```json ... ``` or ``` ... ```
+            json_str = response_text.strip()
+            
+            # Remove markdown code block markers
+            if json_str.startswith("```"):
+                # Find the first newline after ```
+                first_newline = json_str.find("\n")
+                if first_newline != -1:
+                    json_str = json_str[first_newline+1:]
+            
+            if json_str.endswith("```"):
+                # Find the last ``` before the end
+                last_marker = json_str.rfind("```")
+                if last_marker != -1:
+                    json_str = json_str[:last_marker]
+            
+            json_str = json_str.strip()
+            
+            # Find the start of the JSON (first {)
+            start = json_str.find("{")
             if start == -1:
-                raise json.JSONDecodeError("No '{' found in response", response_text, 0)
+                raise json.JSONDecodeError("No '{' found in response", json_str, 0)
 
-            # Find the end of the JSON
-            end = response_text.rfind("}")
-            if end == -1:
-                raise json.JSONDecodeError("No '}' found in response", response_text, 0)
+            # Find the end of the JSON (last matching })
+            # Count braces to find the matching closing brace
+            brace_count = 0
+            end = start
+            for i in range(start, len(json_str)):
+                if json_str[i] == '{':
+                    brace_count += 1
+                elif json_str[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end = i
+                        break
             
-            json_str = response_text[start:end+1]
+            if brace_count != 0:
+                # Fallback to rfind if brace matching fails
+                end = json_str.rfind("}")
+                if end == -1:
+                    raise json.JSONDecodeError("No matching '}' found in response", json_str, 0)
             
-            # Clean up known bad characters from the log
-            json_str = json_str.replace(r'\"', '"') # Fix escaped quotes
-            json_str = json_str.replace(r"G", " ") # Fix non-breaking spaces
+            json_str = json_str[start:end+1]
+            
+            # Clean up known bad characters and fix encoding issues
+            json_str = json_str.replace(r'\"', '"')  # Fix escaped quotes
+            json_str = json_str.replace(r"G", " ")  # Fix non-breaking spaces
+            # Fix "ET" -> "GET" and "GGGET" -> "GET" encoding issues (multiple G's)
+            json_str = re.sub(r'\bG+ET\b', 'GET', json_str)  # GGET, GGGET, etc. -> GET
+            json_str = json_str.replace(" ET ", " GET ")  # Fix "ET" -> "GET"
+            json_str = json_str.replace(" ET/", " GET/")  # Fix "ET/" -> "GET/"
+            json_str = json_str.replace("ET ", "GET ")  # Fix "ET " -> "GET "
+            json_str = json_str.replace("\"ET ", "\"GET ")  # Fix in quotes
+            json_str = json_str.replace(" ET\"", " GET\"")  # Fix in quotes
             
             parsed = json.loads(json_str)
+            
+            # Fix "ET" in the parsed data recursively
+            parsed = self._fix_encoding_in_dict(parsed)
+            
             return parsed
-            # --- END OF FIX ---
 
         except json.JSONDecodeError as e:
             print(f"❌ AI response parsing failed: {e}")
+            print(f"Response text (first 500 chars): {response_text[:500]}")
             
             # If JSON parsing fails, create structured response from text
+            # Try to extract summary from the text
+            summary = response_text[:500] + "..." if len(response_text) > 500 else response_text
+            # Remove markdown if present
+            if "```" in summary:
+                summary = summary.split("```")[-1].strip()
+            
             return {
-                "summary": response_text[:200] + "...", # Truncate summary
+                "summary": summary,
                 "risks": ["AI response parsing failed - manual review needed"],
                 "regulatory_concerns": "Unable to parse",
                 "affected_business_flows": [],
                 "recommendations": ["Review AI response manually"],
                 "deployment_advice": "Proceed with caution"
             }
+    
+    def _fix_encoding_in_dict(self, obj):
+        """Recursively fix encoding issues in parsed JSON"""
+        if isinstance(obj, dict):
+            return {k: self._fix_encoding_in_dict(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._fix_encoding_in_dict(item) for item in obj]
+        elif isinstance(obj, str):
+            # Fix "ET" -> "GET" in strings
+            return obj.replace(" ET ", " GET ").replace(" ET/", " GET/").replace("ET ", "GET ")
+        else:
+            return obj
 
     def _fallback_analysis(self) -> Dict:
         """Fallback analysis if AI fails"""

@@ -15,7 +15,7 @@ from app.engine.ai_analyzer import AIAnalyzer
 from app.engine.risk_scorer import RiskScorer
 from app.utils.neo4j_client import neo4j_client
 from app.utils.github_fetcher import GitHubFetcher
-from app.config import get_consumer_repositories
+from app.config import get_consumer_repositories, CONSUMER_SEARCH_METHOD, GITHUB_TOKEN
 
 
 class APIContractOrchestrator:
@@ -71,12 +71,16 @@ class APIContractOrchestrator:
             after_contracts = await self._extract_contracts_from_file(file_path, repo_path)
             
             # Step 3: Extract API contracts from previous version
-            # Try to get from Neo4j (for now, return None - will compare against empty list)
+            # Try to get from Neo4j first
             print("Step 2/7: Extracting API contracts from previous version...")
             before_contracts = await self._get_existing_contracts_from_neo4j(file_path)
             
-            # If no Neo4j data, use empty list (all will be marked as ADDED)
-            # In production, this would use git to get previous version or query Neo4j
+            # If no Neo4j data, try to extract from code diff
+            if not before_contracts and code_diff:
+                print("   🔍 Attempting to extract 'before' contracts from code diff...")
+                before_contracts = await self._extract_contracts_from_diff(code_diff, file_path)
+            
+            # If still no data, use empty list (all will be marked as ADDED)
             if not before_contracts:
                 before_contracts = []
                 print("   ⚠️ No previous contracts found - all changes will be marked as ADDED")
@@ -89,6 +93,12 @@ class APIContractOrchestrator:
             # Step 5: Find API consumers
             print("Step 4/7: Finding API consumers...")
             consumers = await self._find_all_consumers(after_contracts, repo_path)
+            
+            # Step 4.5: Use commit message to detect breaking changes if commit message contains "BREAKING"
+            # Do this AFTER finding consumers so we can use consumer data
+            if commit_message and "BREAKING" in commit_message.upper():
+                print("   ⚠️ Commit message indicates BREAKING change - enhancing detection...")
+                changes = self._enhance_breaking_changes_from_commit_message(changes, commit_message, after_contracts, consumers)
             
             # Step 6: Store in Neo4j
             print("Step 5/7: Storing API contracts in Neo4j...")
@@ -141,8 +151,10 @@ class APIContractOrchestrator:
     async def _get_repository_path(self, repository: str, github_repo_url: Optional[str], github_branch: str) -> Optional[str]:
         """Get repository path (local or cloned from GitHub)"""
         if github_repo_url:
-            # Clone/update from GitHub
-            repo_path = await self.github_fetcher.fetch_repository(github_repo_url, github_branch)
+            # Clone/update from GitHub (sync function, run in executor to avoid blocking)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            repo_path = await loop.run_in_executor(None, self.github_fetcher.fetch_repository, github_repo_url, github_branch)
             if repo_path:
                 return repo_path
         
@@ -231,6 +243,155 @@ class APIContractOrchestrator:
         # In production, this would query Neo4j for existing API endpoints from this file
         return None
     
+    async def _extract_contracts_from_diff(self, code_diff: str, file_path: str) -> List[Dict]:
+        """
+        Extract API contracts from the 'before' state in a git diff
+        Uses a smarter approach: reconstructs the file by keeping context and removed lines
+        """
+        if not code_diff:
+            return []
+        
+        # Better diff parsing: maintain context around changes
+        before_lines = []
+        lines = code_diff.split('\n')
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Skip diff headers
+            if line.startswith('@@'):
+                # Extract line numbers from hunk header: @@ -start,count +start,count @@
+                i += 1
+                continue
+            if line.startswith('diff --git') or line.startswith('index ') or line.startswith('---') or line.startswith('+++'):
+                i += 1
+                continue
+            
+            # Process diff lines
+            if line.startswith(' '):
+                # Unchanged line - part of both before and after
+                before_lines.append(line[1:])
+            elif line.startswith('-'):
+                # Removed line - only in before
+                before_lines.append(line[1:])
+            elif line.startswith('+'):
+                # Added line - only in after, skip for before
+                pass
+            # Lines starting with \ are continuation (rare)
+            
+            i += 1
+        
+        if not before_lines:
+            return []
+        
+        # Reconstruct file content from before lines
+        before_content = '\n'.join(before_lines)
+        
+        # Extract contracts from the "before" content
+        try:
+            contracts = self.api_extractor.extract_api_contracts(file_path, before_content)
+            if contracts:
+                print(f"   ✅ Extracted {len(contracts)} 'before' contracts from diff")
+                for contract in contracts[:3]:
+                    print(f"      - {contract.get('method')} {contract.get('path')}")
+            return contracts
+        except Exception as e:
+            print(f"   ⚠️ Error extracting contracts from diff: {e}")
+            return []
+    
+    def _enhance_breaking_changes_from_commit_message(
+        self, 
+        changes: List[APIContractChange], 
+        commit_message: str,
+        after_contracts: List[Dict],
+        consumers: Dict[str, List[Dict]]
+    ) -> List[APIContractChange]:
+        """
+        Enhance breaking change detection based on commit message
+        If commit says BREAKING but we didn't detect it, mark relevant changes as breaking
+        """
+        commit_upper = commit_message.upper()
+        
+        # Check if commit message mentions specific breaking changes
+        breaking_keywords = [
+            'BREAKING', 'BREAKING CHANGE', 'BREAKING CHANGE:', 
+            'REMOVED', 'CHANGED', 'MODIFIED', 'REQUIRED PARAMETER',
+            'RESPONSE TYPE', 'RETURN TYPE', 'ENDPOINT PATH'
+        ]
+        
+        is_breaking_commit = any(keyword in commit_upper for keyword in breaking_keywords)
+        
+        if not is_breaking_commit:
+            return changes
+        
+        # If we have ADDED changes but commit says BREAKING, they might be modifications
+        # Check if any ADDED endpoints have consumers (suggests they existed before)
+        enhanced_changes = []
+        added_changes = [c for c in changes if c.change_type == 'ADDED']
+        other_changes = [c for c in changes if c.change_type != 'ADDED']
+        
+        for change in added_changes:
+            # Check if this endpoint has consumers - if so, it's likely a modification, not addition
+            key = f"{change.method} {change.endpoint}"
+            has_consumers = consumers and key in consumers and len(consumers.get(key, [])) > 0
+            
+            # Check commit message for specific mentions
+            endpoint_mentioned = change.endpoint.lower() in commit_message.lower()
+            method_mentioned = change.method.lower() in commit_message.lower()
+            
+            # Check if commit message mentions parameter changes, response type changes, etc.
+            param_keywords = ['parameter', 'param', 'required', 'accountid', 'account_id']
+            response_keywords = ['response', 'return type', 'return_type', 'responseentity']
+            path_keywords = ['path', 'endpoint', 'url', 'route']
+            
+            commit_lower = commit_message.lower()
+            mentions_param = any(kw in commit_lower for kw in param_keywords)
+            mentions_response = any(kw in commit_lower for kw in response_keywords)
+            mentions_path = any(kw in commit_lower for kw in path_keywords)
+            
+            # If endpoint has consumers OR is mentioned in commit message, likely a breaking change
+            # Also check if commit mentions parameter/response/path changes
+            should_mark_breaking = (
+                has_consumers or 
+                (endpoint_mentioned and is_breaking_commit) or
+                (method_mentioned and endpoint_mentioned and is_breaking_commit) or
+                (mentions_param and method_mentioned) or
+                (mentions_response and method_mentioned) or
+                (mentions_path and endpoint_mentioned)
+            )
+            
+            if should_mark_breaking:
+                # Convert to BREAKING
+                reason_parts = [change.details.get('reason', '')]
+                if has_consumers:
+                    reason_parts.append('Has existing consumers')
+                if endpoint_mentioned or method_mentioned:
+                    reason_parts.append('Mentioned in commit message')
+                if mentions_param:
+                    reason_parts.append('Parameter change detected')
+                if mentions_response:
+                    reason_parts.append('Response type change detected')
+                if mentions_path:
+                    reason_parts.append('Path change detected')
+                
+                enhanced_changes.append(APIContractChange(
+                    endpoint=change.endpoint,
+                    method=change.method,
+                    change_type='BREAKING',
+                    details={
+                        **change.details,
+                        'reason': '; '.join([r for r in reason_parts if r]) + ' (Detected as breaking from commit message and consumer analysis)',
+                        'severity': 'CRITICAL',
+                        'detected_from': 'commit_message_and_consumers'
+                    }
+                ))
+                print(f"   ⚠️ Marked {change.method} {change.endpoint} as BREAKING (has consumers or mentioned in commit)")
+            else:
+                enhanced_changes.append(change)
+        
+        return other_changes + enhanced_changes
+    
     async def _find_all_consumers(self, contracts: List[Dict], repo_path: Optional[str]) -> Dict[str, List[Dict]]:
         """
         Find all consumers for each API contract
@@ -262,18 +423,37 @@ class APIContractOrchestrator:
             # 2. Search in other configured repositories (cross-team discovery)
             for repo_identifier in consumer_repos:
                 try:
-                    # Fetch repository
-                    other_repo_path = await self.github_fetcher.fetch_repository(
-                        repo_identifier, 
-                        branch="main"
-                    )
-                    
-                    if other_repo_path:
-                        consumers = self.api_extractor.find_api_consumers(endpoint, method, other_repo_path)
+                    if CONSUMER_SEARCH_METHOD == "api":
+                        # Use GitHub API search (no cloning required)
+                        print(f"      🔍 Searching {repo_identifier} via GitHub API...")
+                        consumers = self.api_extractor.find_api_consumers_via_github_api(
+                            endpoint, 
+                            method, 
+                            repo_identifier,
+                            github_token=GITHUB_TOKEN
+                        )
                         for consumer in consumers:
                             consumer['source_repo'] = repo_identifier
                             all_consumers.append(consumer)
-                        print(f"      ✅ Found {len(consumers)} consumers in {repo_identifier}")
+                        print(f"      ✅ Found {len(consumers)} consumers in {repo_identifier} (via API)")
+                    else:
+                        # Clone and search locally (default)
+                        # fetch_repository is sync, run in executor to avoid blocking
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        other_repo_path = await loop.run_in_executor(
+                            None, 
+                            self.github_fetcher.fetch_repository,
+                            repo_identifier,
+                            "main"
+                        )
+                        
+                        if other_repo_path:
+                            consumers = self.api_extractor.find_api_consumers(endpoint, method, other_repo_path)
+                            for consumer in consumers:
+                                consumer['source_repo'] = repo_identifier
+                                all_consumers.append(consumer)
+                            print(f"      ✅ Found {len(consumers)} consumers in {repo_identifier} (via clone)")
                 except Exception as e:
                     print(f"      ⚠️ Failed to search {repo_identifier}: {e}")
                     continue
@@ -355,10 +535,20 @@ class APIContractOrchestrator:
         # Use API analyzer's scoring
         base_score = self.api_analyzer.calculate_breaking_change_score(breaking_changes, consumer_count)
         
+        # If we have breaking changes but score is still low, boost it
+        if len(breaking_changes) > 0 and base_score < 3.0:
+            # Minimum score for breaking changes should be higher
+            base_score = max(base_score, 3.0 + (len(breaking_changes) * 1.0))
+        
         # Adjust based on AI insights
         ai_risk = len(ai_insights.get('risks', []))
         if ai_risk > 0:
             base_score += min(ai_risk * 0.5, 2.0)
+        
+        # Consumer impact multiplier (stronger for breaking changes)
+        if len(breaking_changes) > 0 and consumer_count > 0:
+            # Breaking changes with consumers are much more critical
+            base_score *= 1.5
         
         # Determine risk level
         if base_score >= 7.5:

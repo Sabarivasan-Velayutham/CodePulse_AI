@@ -126,25 +126,82 @@ class APIContractExtractor:
                     for j in range(i + 1, min(i + 10, len(lines))):
                         method_line = lines[j]
                         
-                        # Extract return type
-                        if current_return_type is None and 'public' in method_line:
-                            return_match = re.search(r'public\s+(\w+(?:<[^>]+>)?)\s+(\w+)\s*\(', method_line)
+                        # Extract return type - improved pattern matching
+                        if current_return_type is None:
+                            # Try multiple patterns for return type
+                            # Pattern 1: public ReturnType methodName(
+                            return_match = re.search(r'public\s+(\w+(?:<[^>]+>)?)\s+\w+\s*\(', method_line)
                             if return_match:
                                 current_return_type = return_match.group(1)
+                            else:
+                                # Pattern 2: ResponseEntity<ReturnType> methodName(
+                                response_match = re.search(r'ResponseEntity\s*<\s*(\w+(?:<[^>]+>)?)\s*>', method_line)
+                                if response_match:
+                                    current_return_type = f"ResponseEntity<{response_match.group(1)}>"
+                                else:
+                                    # Pattern 3: Just look for common return types before method name
+                                    # ReturnType methodName( - without public keyword
+                                    simple_match = re.search(r'(\w+(?:<[^>]+>)?)\s+\w+\s*\([^)]*\)\s*\{', method_line)
+                                    if simple_match and simple_match.group(1) not in ['void', 'private', 'protected', 'static', 'final']:
+                                        current_return_type = simple_match.group(1)
                         
-                        # Extract parameters
-                        if '@RequestBody' in method_line or '@RequestParam' in method_line or '@PathVariable' in method_line:
-                            param_match = re.search(r'@(?:RequestBody|RequestParam|PathVariable)[^)]*\)\s*(\w+(?:<[^>]+>)?)\s+(\w+)', method_line)
-                            if param_match:
-                                param_type = param_match.group(1)
-                                param_name = param_match.group(2)
-                                is_required = '@RequestParam' not in method_line or 'required\s*=\s*false' not in method_line
-                                current_params.append({
-                                    'name': param_name,
-                                    'type': param_type,
-                                    'required': is_required,
-                                    'location': 'body' if '@RequestBody' in method_line else 'query' if '@RequestParam' in method_line else 'path'
-                                })
+                        # Extract parameters - improved pattern matching
+                        # Handle @RequestParam, @RequestBody, @PathVariable
+                        # Pattern 1: @RequestParam String accountId
+                        # Pattern 2: @RequestParam(required = false) String accountId
+                        # Pattern 3: @RequestParam(value = "accountId", required = true) String accountId
+                        param_patterns = [
+                            # @RequestParam(required = false) String accountId
+                            r'@RequestParam\s*\([^)]*required\s*=\s*(true|false)',
+                            # @RequestParam String accountId (default required = true)
+                            r'@RequestParam\s+(?!\()',
+                            # @RequestParam(value = "id") String accountId
+                            r'@RequestParam\s*\([^)]*\)',
+                            # @RequestBody SomeType param
+                            r'@RequestBody',
+                            # @PathVariable String id
+                            r'@PathVariable'
+                        ]
+                        
+                        for pattern in param_patterns:
+                            if re.search(pattern, method_line):
+                                # Extract parameter details
+                                # Try to find the parameter name and type
+                                # @RequestParam String accountId or @RequestParam(required = false) String accountId
+                                param_match = re.search(
+                                    r'@(?:RequestParam|RequestBody|PathVariable)(?:\([^)]*\))?\s+(\w+(?:<[^>]+>)?)\s+(\w+)',
+                                    method_line
+                                )
+                                if param_match:
+                                    param_type = param_match.group(1)
+                                    param_name = param_match.group(2)
+                                    
+                                    # Determine if required
+                                    is_required = True  # Default
+                                    if '@RequestParam' in method_line:
+                                        # Check for required = false
+                                        required_match = re.search(r'required\s*=\s*(true|false)', method_line)
+                                        if required_match:
+                                            is_required = required_match.group(1).lower() == 'true'
+                                        # If no required specified, default is true for @RequestParam
+                                    elif '@PathVariable' in method_line:
+                                        # Path variables are always required
+                                        is_required = True
+                                    elif '@RequestBody' in method_line:
+                                        # Request body is typically required unless @RequestBody(required = false)
+                                        required_match = re.search(r'required\s*=\s*(true|false)', method_line)
+                                        if required_match:
+                                            is_required = required_match.group(1).lower() == 'true'
+                                        else:
+                                            is_required = True  # Default for @RequestBody
+                                    
+                                    current_params.append({
+                                        'name': param_name,
+                                        'type': param_type,
+                                        'required': is_required,
+                                        'location': 'body' if '@RequestBody' in method_line else 'query' if '@RequestParam' in method_line else 'path'
+                                    })
+                                break  # Found a parameter, move to next line
                         
                         # Method signature complete
                         if '{' in method_line and current_method:

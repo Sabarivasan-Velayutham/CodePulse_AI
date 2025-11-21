@@ -83,6 +83,17 @@ export const apiService = {
       return { nodes: [], links: [] }; // Return empty graph
     }
   },
+  
+  // Get dependency graph for API contract changes
+  getApiContractGraph: async (analysisId) => {
+    try {
+      const response = await api.get(`/api/v1/api/contract/graph/${analysisId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Get API contract graph failed:', error);
+      return { nodes: [], links: [] }; // Return empty graph
+    }
+  },
 };
 
 export default api;

@@ -43,6 +43,15 @@ function AnalysisCard({ analysis }) {
             const data = await apiService.getTableDependencyGraph(tableName, databaseName, databaseType, analysisId);
             setGraphData(data);
           }
+        } else if (analysis.type === "api_contract_change") {
+          // For API contract changes, show API consumer graph
+          const analysisId = analysis.id;
+          if (analysisId) {
+            const data = await apiService.getApiContractGraph(analysisId);
+            setGraphData(data);
+          } else {
+            setGraphData(null);
+          }
         } else if (analysis.file_path) {
           // For code changes, get file dependency graph
           const fileName = analysis.file_path.split("/").pop();
@@ -72,6 +81,110 @@ function AnalysisCard({ analysis }) {
     return date.toLocaleString();
   };
 
+  const cleanSummaryText = (text) => {
+    if (!text || typeof text !== 'string') return text;
+    
+    // Remove markdown code blocks
+    let cleaned = text.trim();
+    
+    // Remove "json " prefix if present (e.g., "json { "summary": ...")
+    cleaned = cleaned.replace(/^json\s+/i, '');
+    
+    // Remove ```json ... ``` or ``` ... ```
+    if (cleaned.includes('```')) {
+      // Find and remove code blocks
+      cleaned = cleaned.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+      // Remove trailing ```
+      cleaned = cleaned.replace(/```\s*$/g, '').trim();
+    }
+    
+    // If it looks like raw JSON, try to extract summary
+    if (cleaned.startsWith('{') && cleaned.includes('"summary"')) {
+      try {
+        const parsed = JSON.parse(cleaned);
+        return parsed.summary || cleaned;
+      } catch (e) {
+        // If parsing fails, try to extract summary manually with better regex
+        // Handle both "summary": "text" and "summary": "text with \"escaped\" quotes"
+        const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (summaryMatch) {
+          // Unescape JSON string
+          let summary = summaryMatch[1]
+            .replace(/\\"/g, '"')
+            .replace(/\\n/g, '\n')
+            .replace(/\\t/g, '\t')
+            .replace(/\\\\/g, '\\');
+          return summary;
+        }
+        // Try to find summary value even if it spans multiple lines
+        const multilineMatch = cleaned.match(/"summary"\s*:\s*"([\s\S]*?)"/);
+        if (multilineMatch) {
+          return multilineMatch[1].trim();
+        }
+      }
+    }
+    
+    // Fix "ET" -> "GET" and "GGGET" -> "GET" encoding issues
+    cleaned = cleaned.replace(/\bG+ET\b/g, 'GET');  // GGET, GGGET, etc. -> GET
+    cleaned = cleaned.replace(/\bET\s+/g, 'GET ').replace(/\bET\//g, 'GET/');
+    
+    return cleaned;
+  };
+
+  const formatChangeDetails = (details) => {
+    if (!details) return null;
+    
+    // If details is already a string, return it
+    if (typeof details === 'string') {
+      return details;
+    }
+    
+    // If details is an object, format it
+    if (typeof details === 'object') {
+      const parts = [];
+      
+      if (details.reason) {
+        parts.push(details.reason);
+      }
+      
+      if (details.modifications && Array.isArray(details.modifications)) {
+        parts.push(...details.modifications);
+      } else if (details.modifications && typeof details.modifications === 'string') {
+        parts.push(details.modifications);
+      }
+      
+      // If we have before/after info, add it
+      if (details.before && details.after) {
+        const beforeParams = details.before.parameters || {};
+        const afterParams = details.after.parameters || {};
+        const paramChanges = [];
+        
+        // Check for parameter changes
+        Object.keys(afterParams).forEach(param => {
+          if (!beforeParams[param]) {
+            paramChanges.push(`Added parameter: ${param}`);
+          }
+        });
+        
+        Object.keys(beforeParams).forEach(param => {
+          if (!afterParams[param]) {
+            paramChanges.push(`Removed parameter: ${param}`);
+          } else if (beforeParams[param]?.type !== afterParams[param]?.type) {
+            paramChanges.push(`Parameter ${param} type changed: ${beforeParams[param]?.type} → ${afterParams[param]?.type}`);
+          }
+        });
+        
+        if (paramChanges.length > 0) {
+          parts.push(...paramChanges);
+        }
+      }
+      
+      return parts.length > 0 ? parts.join('; ') : 'Change details available';
+    }
+    
+    return null;
+  };
+
   return (
     <Card className="analysis-card">
       <CardContent>
@@ -83,6 +196,8 @@ function AnalysisCard({ analysis }) {
               <Typography variant="h6" component="span">
                 {analysis.type === "schema_change" 
                   ? `🗄️ ${analysis.schema_change?.table_name || "Schema Change"}`
+                  : analysis.type === "api_contract_change"
+                  ? `🔌 ${analysis.file_path?.split("/").pop() || "API Contract Change"}`
                   : analysis.file_path?.split("/").pop() || "Unknown File"}
               </Typography>
             </div>
@@ -128,7 +243,45 @@ function AnalysisCard({ analysis }) {
 
         {/* Quick Stats */}
         <Box className="quick-stats" mt={2}>
-          {analysis.type === "schema_change" ? (
+          {analysis.type === "api_contract_change" ? (
+            <>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  API Changes
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.summary?.total_changes || analysis.api_changes?.length || 0}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Breaking Changes
+                </Typography>
+                <Typography variant="h6" style={{ color: '#dc3545' }}>
+                  {analysis.summary?.breaking_changes || 
+                   (analysis.api_changes?.filter(c => c.change_type === 'BREAKING').length || 0)}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Affected Consumers
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.summary?.total_consumers || 
+                   Object.values(analysis.consumers || {}).reduce((sum, cons) => sum + cons.length, 0)}
+                </Typography>
+              </div>
+              <div className="stat-item">
+                <Typography variant="caption" color="textSecondary">
+                  Affected Endpoints
+                </Typography>
+                <Typography variant="h6">
+                  {analysis.summary?.affected_endpoints || 
+                   new Set(analysis.api_changes?.map(c => c.endpoint) || []).size}
+                </Typography>
+              </div>
+            </>
+          ) : analysis.type === "schema_change" ? (
             <>
               <div className="stat-item">
                 <Typography variant="caption" color="textSecondary">
@@ -207,7 +360,7 @@ function AnalysisCard({ analysis }) {
             🤖 AI Insights:
           </Typography>
           <Typography variant="body1">
-            {analysis.ai_insights.summary}
+            {cleanSummaryText(analysis.ai_insights.summary)}
           </Typography>
         </Box>
 
@@ -403,8 +556,161 @@ function AnalysisCard({ analysis }) {
             );
           })()}
 
+          {/* API Contract Change Details */}
+          {analysis.type === "api_contract_change" && (
+            <>
+              {/* API Changes */}
+              {analysis.api_changes && analysis.api_changes.length > 0 && (
+                <Box mb={3}>
+                  <Typography variant="h6" gutterBottom>
+                    🔌 API Contract Changes ({analysis.api_changes.length})
+                  </Typography>
+                  {analysis.api_changes.map((change, index) => (
+                    <Box key={index} mb={2} p={2} sx={{ 
+                      border: '1px solid #e0e0e0', 
+                      borderRadius: 1, 
+                      backgroundColor: change.change_type === 'BREAKING' ? '#ffebee' : '#f5f5f5'
+                    }}>
+                      <Box display="flex" alignItems="center" gap={1} mb={1}>
+                        <Chip 
+                          label={change.method || 'N/A'} 
+                          size="small" 
+                          color="primary"
+                          variant="outlined"
+                        />
+                        <Typography variant="subtitle1" style={{ fontWeight: 'bold' }}>
+                          {change.endpoint || 'N/A'}
+                        </Typography>
+                        <Chip 
+                          label={change.change_type || 'UNKNOWN'} 
+                          size="small" 
+                          color={change.change_type === 'BREAKING' ? 'error' : 
+                                 change.change_type === 'MODIFIED' ? 'warning' : 'success'}
+                          style={{ marginLeft: 'auto' }}
+                        />
+                      </Box>
+                      {change.details && formatChangeDetails(change.details) && (
+                        <Typography variant="body2" color="textSecondary" style={{ marginTop: '0.5rem' }}>
+                          {formatChangeDetails(change.details)}
+                        </Typography>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              )}
+
+              {/* API Consumers */}
+              {analysis.consumers && Object.keys(analysis.consumers).length > 0 && (
+                <Box mb={3}>
+                  <Typography variant="h6" gutterBottom>
+                    👥 Affected Consumers ({Object.values(analysis.consumers).reduce((sum, cons) => sum + cons.length, 0)})
+                  </Typography>
+                  {Object.entries(analysis.consumers).map(([apiKey, consumerList]) => {
+                    if (!consumerList || consumerList.length === 0) return null;
+                    
+                    // Group consumers by repository
+                    const byRepo = {};
+                    consumerList.forEach(consumer => {
+                      const repo = consumer.source_repo || consumer.repository || 'unknown';
+                      if (!byRepo[repo]) {
+                        byRepo[repo] = [];
+                      }
+                      byRepo[repo].push(consumer);
+                    });
+                    
+                    return (
+                      <Box key={apiKey} mb={2} p={2} sx={{ border: '1px solid #e0e0e0', borderRadius: 1 }}>
+                        <Typography variant="subtitle2" gutterBottom style={{ fontWeight: 'bold', color: '#1976d2' }}>
+                          {apiKey}
+                        </Typography>
+                        {Object.entries(byRepo).map(([repo, repoConsumers]) => (
+                          <Box key={repo} mt={1.5} mb={1}>
+                            <Typography variant="body2" style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                              📦 Repository: {repo} ({repoConsumers.length} file{repoConsumers.length !== 1 ? 's' : ''})
+                            </Typography>
+                            <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+                              {repoConsumers.map((consumer, idx) => (
+                                <li key={idx} style={{ marginBottom: '0.5rem' }}>
+                                  <Typography variant="body2">
+                                    <strong>File:</strong> {consumer.file_path || 'N/A'}
+                                    {consumer.line_number > 0 && (
+                                      <span style={{ color: '#666', marginLeft: '0.5rem' }}>
+                                        (Line {consumer.line_number})
+                                      </span>
+                                    )}
+                                    {consumer.html_url && (
+                                      <a 
+                                        href={consumer.html_url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        style={{ marginLeft: '0.5rem', color: '#1976d2' }}
+                                      >
+                                        🔗 View on GitHub
+                                      </a>
+                                    )}
+                                  </Typography>
+                                  {consumer.context && (
+                                    <Typography variant="caption" color="textSecondary" style={{ 
+                                      display: 'block', 
+                                      marginLeft: '1rem',
+                                      fontFamily: 'monospace',
+                                      backgroundColor: '#f5f5f5',
+                                      padding: '0.25rem 0.5rem',
+                                      borderRadius: '3px',
+                                      marginTop: '0.25rem'
+                                    }}>
+                                      {consumer.context}
+                                    </Typography>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </Box>
+                        ))}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              )}
+
+              {/* Summary */}
+              {analysis.summary && (
+                <Box mb={2} p={2} sx={{ backgroundColor: '#e3f2fd', borderRadius: 1 }}>
+                  <Typography variant="h6" gutterBottom>
+                    📊 Analysis Summary
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Typography variant="body2">
+                        <strong>Total Changes:</strong> {analysis.summary.total_changes || 0}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="body2">
+                        <strong>Breaking Changes:</strong> 
+                        <span style={{ color: '#dc3545', marginLeft: '0.5rem' }}>
+                          {analysis.summary.breaking_changes || 0}
+                        </span>
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="body2">
+                        <strong>Total Consumers:</strong> {analysis.summary.total_consumers || 0}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="body2">
+                        <strong>Affected Endpoints:</strong> {analysis.summary.affected_endpoints || 0}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </Box>
+              )}
+            </>
+          )}
+
           {/* Affected Modules (for code changes) */}
-          {analysis.type !== "schema_change" && (
+          {analysis.type !== "schema_change" && analysis.type !== "api_contract_change" && (
             <Box>
               <Typography variant="h6" gutterBottom>
                 📦 Affected Modules ({analysis.affected_modules?.length || 0})

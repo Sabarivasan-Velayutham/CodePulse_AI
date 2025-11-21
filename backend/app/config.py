@@ -42,6 +42,11 @@ API_CONSUMER_REPOSITORIES = [
 # Whether to search all configured repos for API consumers
 SEARCH_ALL_REPOS_FOR_CONSUMERS = os.getenv("SEARCH_ALL_REPOS_FOR_CONSUMERS", "true").lower() == "true"
 
+# GitHub API Configuration
+# Set to "api" to use GitHub API search (no cloning), "clone" to clone repos locally
+CONSUMER_SEARCH_METHOD = os.getenv("CONSUMER_SEARCH_METHOD", "clone").lower()  # "clone" or "api"
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")  # Optional: for higher API rate limits
+
 def get_consumer_repositories() -> List[str]:
     """
     Get list of repositories to search for API consumers

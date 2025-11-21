@@ -13,14 +13,18 @@
 In modern software development, especially in financial and enterprise applications:
 - **Schema changes** can break production systems if not properly analyzed
 - **Code changes** have cascading effects that are difficult to track manually
+- **API contract changes** break microservices and frontend applications without warning
+- **Cross-team dependencies** are invisible - backend teams don't know which services consume their APIs
 - **Dependency analysis** is time-consuming and error-prone
 - **Risk assessment** lacks context-aware intelligence
-- **No unified view** of code-to-code and code-to-database relationships
+- **No unified view** of code-to-code, code-to-database, and API-to-consumer relationships
 
 ### Our Solution
 
 CodePulse AI provides:
 - ✅ **Automatic Detection**: Zero-config monitoring for PostgreSQL and MongoDB schema changes
+- ✅ **API Contract Analysis**: Detects breaking changes in REST/GraphQL/gRPC APIs across multiple repositories
+- ✅ **Cross-Repository Consumer Discovery**: Finds API consumers across different teams and repositories
 - ✅ **Real-time Analysis**: Event-driven architecture with instant notifications
 - ✅ **AI-Powered Insights**: Google Gemini 1.5 Flash for context-aware risk assessment
 - ✅ **Multi-Database Support**: Unified analysis for SQL (PostgreSQL) and NoSQL (MongoDB)
@@ -45,10 +49,11 @@ CodePulse AI provides:
                      │   Triggers   │     │  Graph DB   │
                      └──────────────┘     └─────────────┘
                             │                     │
-                     ┌──────────────┐             │
-                     │   MongoDB    │             │
-                     │Change Streams│             │
-                     └──────────────┘             │
+                     ┌──────────────┐     ┌─────────────┐
+                     │   MongoDB    │     │   API       │
+                     │Change Streams│     │  Contract   │
+                     └──────────────┘     │  Analyzer   │
+                            │             └─────────────┘
                             │                     │
                             └─────────┬──────────┘
                                       ▼
@@ -97,11 +102,14 @@ CodePulse AI provides:
 - **PostgreSQL**: Event triggers (`ddl_command_end`, `sql_drop`) with `pg_notify`
 - **MongoDB**: Change Streams on database/collections for real-time monitoring
 - **GitHub**: Webhook integration for code commit analysis
+- **API Contracts**: Automatic detection of API endpoint changes in code commits
 
 #### 2. **Dependency Analysis Engine**
 - **Code Parsing**: SQL queries, ORM patterns (Hibernate, SQLAlchemy), heuristic detection
+- **API Extraction**: Spring Boot, Flask, FastAPI, Express.js endpoint detection
 - **Database Relationships**: Foreign keys, views, triggers, references
-- **Graph Storage**: Neo4j stores all relationships (code-to-code, code-to-database)
+- **Cross-Repository Search**: Finds API consumers across multiple GitHub repositories
+- **Graph Storage**: Neo4j stores all relationships (code-to-code, code-to-database, API-to-consumer)
 
 #### 3. **AI Analysis Module**
 - **Context Understanding**: Semantic analysis of code changes
@@ -133,6 +141,25 @@ CodePulse AI provides:
 6. **AI Analysis**: Gemini analyzes impact and risks
 7. **Risk Scoring**: Multi-factor algorithm calculates risk score
 8. **Display**: React dashboard shows results with interactive graph
+
+### API Contract Change Analysis Flow
+
+1. **Trigger**: Developer commits API-related code changes (controllers, routes, etc.)
+2. **Detection**: System detects API endpoint definitions in changed files
+3. **Extraction**: API contract extractor parses endpoints (Spring Boot, Flask, FastAPI, Express)
+4. **Comparison**: Compares before/after contracts from git diff or Neo4j history
+5. **Breaking Change Detection**: 
+   - Identifies removed endpoints, changed parameters, response type changes
+   - Uses commit message analysis ("BREAKING" keyword detection)
+   - Detects path changes and required parameter additions
+6. **Consumer Discovery**: 
+   - Searches current repository for API consumers
+   - Cross-repository search across configured consumer repositories
+   - Uses GitHub API search or local cloning based on configuration
+7. **Graph Storage**: API endpoints and consumer relationships stored in Neo4j
+8. **AI Analysis**: Gemini analyzes breaking change impact and provides recommendations
+9. **Risk Scoring**: Calculates risk based on breaking changes, consumer count, and AI insights
+10. **Display**: React dashboard shows API changes, affected consumers, and interactive graph
 
 ### Schema Change Analysis Flow
 
@@ -203,6 +230,14 @@ NEO4J_PASSWORD=your_neo4j_password
 
 # Frontend
 REACT_APP_API_URL=http://localhost:8000
+
+# API Contract Analysis (Optional)
+# List of repositories to search for API consumers (comma-separated, owner/repo format)
+API_CONSUMER_REPOSITORIES=owner1/repo1,owner2/repo2,owner3/repo3
+# Search method: "clone" (local cloning) or "api" (GitHub API search)
+CONSUMER_SEARCH_METHOD=clone
+# Optional: GitHub token for higher API rate limits (5000/hour vs 10/hour)
+GITHUB_TOKEN=your_github_token_here
 ```
 
 ### Setup Instructions
@@ -322,7 +357,31 @@ curl -X POST http://localhost:8000/api/v1/schema/webhook \
   }'
 ```
 
-### 4. Load Sample Data
+### 4. Analyze API Contract Change
+
+```bash
+curl -X POST http://localhost:8000/api/v1/api/contract/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "backend-api-service/src/main/java/com/backendapi/StockController.java",
+    "repository": "backend-api-service",
+    "diff": "@PostMapping(\"/buy\")\n-public ResponseEntity<String> buyStock(@RequestParam String stockId) {\n+public ResponseEntity<String> buyStock(@RequestParam String stockId, @RequestParam String accountId) {",
+    "commit_sha": "abc123",
+    "commit_message": "BREAKING: Added required accountId parameter to buyStock endpoint"
+  }'
+```
+
+### 5. Test API Contract Changes
+
+```bash
+# Run API contract change test scenarios
+python scripts/test_backend_api_change.py --all
+
+# Test specific scenario
+python scripts/test_backend_api_change.py --scenario 1
+```
+
+### 6. Load Sample Data
 
 ```bash
 # Load PostgreSQL sample data
@@ -332,7 +391,7 @@ python scripts/load_demo_data.py
 python scripts/load_mongodb_data.py
 ```
 
-### 5. Start Schema Change Listeners
+### 7. Start Schema Change Listeners
 
 ```bash
 # PostgreSQL listener
@@ -389,6 +448,16 @@ python scripts/mongodb_schema_listener.py
 - **MongoDB**: Collections, fields, indexes, references
 - **Unified Interface**: Same analysis pipeline for both database types
 
+### 7. **API Contract Change Detection**
+
+- **Multi-Framework Support**: Spring Boot (Java), Flask/FastAPI (Python), Express.js (Node.js)
+- **Breaking Change Detection**: Identifies removed endpoints, changed parameters, response type changes, path modifications
+- **Cross-Repository Consumer Discovery**: Finds API consumers across multiple GitHub repositories
+- **Commit Message Analysis**: Detects "BREAKING" keywords and enhances change classification
+- **Diff-Based Comparison**: Reconstructs "before" state from git diffs when Neo4j history unavailable
+- **Graph Visualization**: Shows API endpoints and their consumer relationships
+- **Risk Assessment**: Calculates risk based on breaking changes, consumer count, and AI insights
+
 ---
 
 ## 📁 Project Structure
@@ -398,16 +467,23 @@ CodePulse_AI/
 ├── backend/
 │   ├── app/
 │   │   ├── api/              # API endpoints
-│   │   ├── engine/           # Core analysis engines
-│   │   │   ├── ai_analyzer.py
-│   │   │   ├── risk_scorer.py
-│   │   │   ├── orchestrator.py
-│   │   │   └── schema_orchestrator.py
+│   │   │   ├── analysis.py
+│   │   │   ├── schema.py
+│   │   │   ├── webhooks.py
+│   │   │   └── api_contract.py
 │   │   ├── services/         # Service layer
 │   │   │   ├── depends_wrapper.py
 │   │   │   ├── sql_extractor.py
 │   │   │   ├── schema_analyzer.py
-│   │   │   └── mongodb_schema_analyzer.py
+│   │   │   ├── mongodb_schema_analyzer.py
+│   │   │   ├── api_extractor.py
+│   │   │   └── api_contract_analyzer.py
+│   │   ├── engine/           # Core analysis engines
+│   │   │   ├── ai_analyzer.py
+│   │   │   ├── risk_scorer.py
+│   │   │   ├── orchestrator.py
+│   │   │   ├── schema_orchestrator.py
+│   │   │   └── api_contract_orchestrator.py
 │   │   ├── utils/            # Utilities
 │   │   │   └── neo4j_client.py
 │   │   └── main.py          # FastAPI app
@@ -461,7 +537,15 @@ Plan database migrations by:
 - Assessing migration complexity
 - Getting AI recommendations
 
-### 4. **Compliance & Audit**
+### 4. **API Contract Change Management**
+Prevent breaking changes in microservices by:
+- Detecting API endpoint modifications before deployment
+- Finding all consumers across different repositories and teams
+- Identifying breaking changes (removed endpoints, changed parameters, response types)
+- Calculating impact on dependent services
+- Getting AI-powered recommendations for API versioning strategies
+
+### 5. **Compliance & Audit**
 Maintain compliance by:
 - Tracking all schema changes
 - Documenting dependencies
@@ -503,7 +587,26 @@ python scripts/mongodb_schema_listener.py
    - Content type: `application/json`
    - Events: `push`
 
-2. **Backend automatically processes** commits and analyzes changes
+2. **Backend automatically processes** commits and analyzes changes:
+   - Code changes → Dependency analysis
+   - API-related files → API contract change analysis
+   - Schema changes → Database impact analysis
+
+### API Consumer Discovery Configuration
+
+1. **Configure consumer repositories** in `.env`:
+```env
+# List of repositories to search for API consumers (owner/repo format)
+API_CONSUMER_REPOSITORIES=Sabarivasan-Velayutham/Stocks_Portfolio_Management,Sabarivasan-Velayutham/auctioneer,Sabarivasan-Velayutham/MobileStore_Project
+
+# Search method: "clone" (local cloning) or "api" (GitHub API search)
+CONSUMER_SEARCH_METHOD=clone
+
+# Optional: GitHub token for higher API rate limits (5000/hour vs 10/hour)
+GITHUB_TOKEN=your_github_token_here
+```
+
+2. **System automatically searches** configured repositories when API changes are detected
 
 ---
 
@@ -520,6 +623,13 @@ python scripts/mongodb_schema_listener.py
 - `POST /api/v1/schema/analyze` - Analyze schema change (synchronous)
 - `POST /api/v1/schema/webhook` - Schema change webhook (asynchronous)
 - `GET /api/v1/schema/analysis/{id}` - Get schema analysis results
+
+### API Contract Analysis
+
+- `POST /api/v1/api/contract/analyze` - Analyze API contract changes
+- `GET /api/v1/api/contract/analysis/{analysis_id}` - Get API contract analysis results
+- `GET /api/v1/api/contract/graph/{analysis_id}` - Get API contract dependency graph
+- `GET /api/v1/api/contract/consumers` - Get consumers of a specific API endpoint
 
 ### Dependency Graph
 
@@ -629,6 +739,9 @@ Developed as part of a hackathon project.
 - [MongoDB Setup Guide](docs/MONGODB_SETUP_GUIDE.md)
 - [MongoDB Change Streams](docs/MONGODB_CHANGE_STREAMS_SETUP.md)
 - [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)
+- [API Contract Change Detection](docs/API_CONTRACT_FRONTEND_GUIDE.md)
+- [Multi-Repository Consumer Discovery](docs/MULTI_REPO_SETUP.md)
+- [GitHub API Search Guide](docs/GITHUB_API_SEARCH_GUIDE.md)
 
 ---
 

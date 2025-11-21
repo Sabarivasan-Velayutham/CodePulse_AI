@@ -41,9 +41,36 @@ class APIContractAnalyzer:
         before_map = {(c['method'], c['path']): c for c in before_contracts}
         after_map = {(c['method'], c['path']): c for c in after_contracts}
         
-        # Find removed endpoints (BREAKING)
+        # Track which before endpoints have been matched to path changes
+        matched_before_endpoints = set()
+        
+        # First, check for path changes (same method, similar path)
+        # This must be done before checking for removed endpoints to avoid double-counting
+        for after_key, after_contract in after_map.items():
+            if after_key not in before_map:
+                # Check if this might be a path change
+                for before_key, before_contract in before_map.items():
+                    if (before_contract['method'] == after_contract['method'] and 
+                        before_key not in after_map and
+                        self._is_similar_path(before_contract['path'], after_contract['path'])):
+                        # This is a path change (BREAKING)
+                        matched_before_endpoints.add(before_key)
+                        changes.append(APIContractChange(
+                            endpoint=after_contract['path'],
+                            method=after_contract['method'],
+                            change_type='BREAKING',
+                            details={
+                                'reason': f"Endpoint path changed from '{before_contract['path']}' to '{after_contract['path']}'",
+                                'severity': 'CRITICAL',
+                                'before': before_contract,
+                                'after': after_contract
+                            }
+                        ))
+                        break
+        
+        # Find removed endpoints (BREAKING) - exclude those already matched as path changes
         for key, contract in before_map.items():
-            if key not in after_map:
+            if key not in after_map and key not in matched_before_endpoints:
                 changes.append(APIContractChange(
                     endpoint=contract['path'],
                     method=contract['method'],
@@ -55,19 +82,31 @@ class APIContractAnalyzer:
                     }
                 ))
         
-        # Find added endpoints (NON-BREAKING)
+        # Find added endpoints (truly new, not path changes)
+        # Path changes were already handled above
         for key, contract in after_map.items():
             if key not in before_map:
-                changes.append(APIContractChange(
-                    endpoint=contract['path'],
-                    method=contract['method'],
-                    change_type='ADDED',
-                    details={
-                        'reason': 'New endpoint added',
-                        'severity': 'LOW',
-                        'after': contract
-                    }
-                ))
+                # Check if this was already handled as a path change
+                is_path_change = False
+                for before_key in before_map:
+                    if (before_map[before_key]['method'] == contract['method'] and
+                        before_key in matched_before_endpoints and
+                        self._is_similar_path(before_map[before_key]['path'], contract['path'])):
+                        is_path_change = True
+                        break
+                
+                if not is_path_change:
+                    # Truly new endpoint (NON-BREAKING)
+                    changes.append(APIContractChange(
+                        endpoint=contract['path'],
+                        method=contract['method'],
+                        change_type='ADDED',
+                        details={
+                            'reason': 'New endpoint added',
+                            'severity': 'LOW',
+                            'after': contract
+                        }
+                    ))
         
         # Find modified endpoints
         for key in before_map:
@@ -138,6 +177,41 @@ class APIContractAnalyzer:
             )
         
         return None
+    
+    def _is_similar_path(self, path1: str, path2: str) -> bool:
+        """
+        Check if two paths are similar (likely a path change)
+        Examples:
+        - /api/stocks/{id}/price vs /api/stocks/{id}/current-price -> True
+        - /api/stocks/{id} vs /api/stocks/{id}/price -> False (different structure)
+        """
+        # Normalize paths (remove leading/trailing slashes, convert to lowercase)
+        p1 = path1.strip('/').lower()
+        p2 = path2.strip('/').lower()
+        
+        # If paths are identical, they're not similar (they're the same)
+        if p1 == p2:
+            return False
+        
+        # Split into segments
+        segments1 = p1.split('/')
+        segments2 = p2.split('/')
+        
+        # Must have same number of segments to be a path change
+        if len(segments1) != len(segments2):
+            return False
+        
+        # Count differences
+        differences = 0
+        for s1, s2 in zip(segments1, segments2):
+            if s1 != s2:
+                differences += 1
+                # If more than one segment differs, probably not a simple path change
+                if differences > 1:
+                    return False
+        
+        # If exactly one segment differs, it's likely a path change
+        return differences == 1
     
     def calculate_breaking_change_score(self, changes: List[APIContractChange], consumer_count: int) -> float:
         """
