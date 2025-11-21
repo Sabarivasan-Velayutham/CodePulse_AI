@@ -5,6 +5,8 @@ Supports: Spring Boot (Java), Flask/FastAPI (Python), Express (Node.js), etc.
 """
 
 import re
+import os
+import requests
 from typing import Dict, List, Set, Tuple, Optional
 from pathlib import Path
 
@@ -79,7 +81,8 @@ class APIContractExtractor:
         class_line = 0
         for i, line in enumerate(lines):
             if '@RequestMapping' in line:
-                match = re.search(r'@RequestMapping\s*\([^)]*value\s*=\s*["\']([^"\']+)["\']', line)
+                # Try both formats: @RequestMapping("/path") and @RequestMapping(value = "/path")
+                match = re.search(r'@RequestMapping\s*\([^)]*(?:value\s*=\s*)?["\']([^"\']+)["\']', line)
                 if match:
                     class_base_path = match.group(1)
                     class_line = i + 1
@@ -93,12 +96,23 @@ class APIContractExtractor:
         
         for i, line in enumerate(lines):
             # Check for HTTP method annotations
+            # Spring Boot uses camelCase: @GetMapping, @PostMapping, etc.
             for method in self.http_methods:
-                annotation = f'@{method}Mapping'
+                # Convert GET -> Get, POST -> Post, etc.
+                method_camel = method.capitalize() if len(method) > 1 else method.upper()
+                annotation = f'@{method_camel}Mapping'
                 if annotation in line:
-                    # Extract path
-                    path_match = re.search(rf'@{method}Mapping\s*\([^)]*value\s*=\s*["\']([^"\']+)["\']', line)
-                    path = path_match.group(1) if path_match else ""
+                    # Extract path - handle multiple formats:
+                    # @PostMapping("/buy") - direct string
+                    # @PostMapping(value = "/buy") - with value=
+                    # @PostMapping() - empty parentheses (uses class path only)
+                    # @PostMapping - no parentheses (uses class path only)
+                    path = ""
+                    # Try to match with parentheses and path (use camelCase annotation)
+                    path_match = re.search(rf'@{method_camel}Mapping\s*\([^)]*(?:value\s*=\s*)?["\']([^"\']+)["\']', line)
+                    if path_match:
+                        path = path_match.group(1)
+                    # If no path found but annotation exists, path remains "" which will use class base path only
                     
                     # Combine with class base path
                     full_path = self._combine_paths(class_base_path, path)
@@ -407,6 +421,112 @@ class APIContractExtractor:
                         continue  # Skip files that can't be read
         except Exception:
             pass
+        
+        return consumers
+    
+    def find_api_consumers_via_github_api(
+        self, 
+        api_path: str, 
+        api_method: str, 
+        repo_identifier: str,
+        github_token: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Find API consumers using GitHub Search API (no cloning required)
+        
+        This method searches GitHub repositories directly using the GitHub Search API,
+        which is useful when cloning repositories is not feasible (e.g., hackathon demos,
+        rate limits, or disk space constraints).
+        
+        Args:
+            api_path: API path (e.g., '/api/stocks/buy')
+            api_method: HTTP method (e.g., 'POST')
+            repo_identifier: Repository identifier (e.g., 'owner/repo')
+            github_token: Optional GitHub token for higher rate limits (5000 vs 10 requests/hour)
+        
+        Returns:
+            List of consumer file information with file paths and GitHub URLs
+        """
+        consumers = []
+        
+        # Normalize repo identifier
+        if '/' not in repo_identifier:
+            return consumers
+        
+        owner, repo = repo_identifier.split('/', 1)
+        
+        # Build search query - GitHub API search format
+        # Escape special characters and build queries for different patterns
+        api_path_clean = api_path.strip('/')
+        
+        # Optimized search - use only the most effective query to reduce API calls
+        # Exact path match is most reliable
+        search_queries = [
+            f'repo:{owner}/{repo} "{api_path}"',
+        ]
+        
+        # Only add one additional query if we have method info (to reduce API calls)
+        # if api_method:
+        #     method_lower = api_method.lower()
+        #     search_queries.append(
+        #         f'repo:{owner}/{repo} {method_lower} "{api_path}"'
+        #     )
+        
+        headers = {'Accept': 'application/vnd.github.v3+json'}
+        if github_token:
+            headers['Authorization'] = f'token {github_token}'
+        
+        # Search for each pattern
+        seen_files = set()
+        for query in search_queries:
+            try:
+                url = 'https://api.github.com/search/code'
+                params = {'q': query}
+                
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get('items', [])
+                    
+                    for item in items:
+                        file_path = item.get('path', '')
+                        # Filter to code files only
+                        code_extensions = ['.js', '.jsx', '.ts', '.tsx', '.java', '.py', '.go', '.rb', '.php', '.cpp', '.c']
+                        if any(file_path.endswith(ext) for ext in code_extensions):
+                            # Avoid duplicates
+                            if file_path not in seen_files:
+                                seen_files.add(file_path)
+                                consumers.append({
+                                    'file_path': file_path,
+                                    'line_number': 0,  # GitHub API doesn't provide exact line numbers
+                                    'context': f"Found in {item.get('name', 'file')}",
+                                    'api_path': api_path,
+                                    'source': 'github_api',
+                                    'html_url': item.get('html_url', ''),
+                                    'repository': repo_identifier
+                                })
+                
+                elif response.status_code == 403:
+                    # Rate limit exceeded - stop all searches for this repo
+                    rate_limit_info = response.headers.get('X-RateLimit-Remaining', 'unknown')
+                    rate_limit_reset = response.headers.get('X-RateLimit-Reset', 'unknown')
+                    print(f"   ⚠️ GitHub API rate limit exceeded for {repo_identifier} (remaining: {rate_limit_info})")
+                    if not github_token:
+                        print(f"   💡 Tip: Set GITHUB_TOKEN in .env for higher rate limits (5000/hour)")
+                        print(f"   💡 Alternative: Set CONSUMER_SEARCH_METHOD=clone to use local cloning instead")
+                    # Return early to avoid more rate limit errors
+                    return consumers
+                elif response.status_code == 422:
+                    # Invalid query - skip this query
+                    continue
+                elif response.status_code == 401:
+                    print(f"   ⚠️ GitHub API authentication failed for {repo_identifier}")
+                    break
+                    
+            except requests.RequestException as e:
+                print(f"   ⚠️ GitHub API search failed for {repo_identifier}: {e}")
+                continue
         
         return consumers
 
